@@ -1,0 +1,8 @@
+# Files to ignore
+.Rproj.user
+.RData
+.Rhistory
+
+# Folders to ignore
+/data
+/dox_rankings
