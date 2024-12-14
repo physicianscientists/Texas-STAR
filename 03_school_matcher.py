@@ -24,7 +24,7 @@ def data_importer():
     
     # Optional filter for specialties that I already matched
     #specialties = ["Anesthesiology", "Child Neurology", "Dermatology", "Emergency Medicine", "Family Medicine", "Internal Medicine"]
-    unmatched = unmatched[unmatched["specialty"]=="Neurodevelopmental Disabilities"]  #change accordingly
+    unmatched = unmatched[unmatched["specialty"]=="Neurological Surgery"]  #change accordingly
     
     print(star.head())
     print(unmatched.head())
@@ -49,7 +49,7 @@ def program_matcher(unmatched, dox):
         specialty = row["specialty"]
         
         # Filtering doximity by specialty and getting a unique list of specialties
-        dox_filt = dox[dox["specialty"].isin(["Internal Medicine"])]  #==specialty
+        dox_filt = dox[dox["specialty"].isin(["Neurological Surgery", "Surgery"])]  #==specialty
         dox_filt = dox_filt["program"].unique()
         
         # Looping over each specialty and appending fuzzy string match scores
@@ -71,7 +71,7 @@ def program_matcher(unmatched, dox):
         df = pd.DataFrame({"ratio": ratio, "partial_ratio": partial_ratio, "sort_ratio": sort_ratio, "set_ratio": set_ratio, "partial_token": partial_token, "dox_program": dox_program_list})
         df["star_program"] = program
         df["specialty"] = specialty
-        df["mean_ratio"] = df.mean(axis=1)
+        df["mean_ratio"] = df[["ratio", "partial_ratio", "sort_ratio", "set_ratio", "partial_token"]].mean(axis=1)
         df = df.sort_values("mean_ratio", ascending=False).reset_index(drop=True)
         max_ratio = max(df["mean_ratio"])
         df_print = df.iloc[:, 5:9]
