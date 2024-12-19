@@ -2,6 +2,8 @@
 .Rproj.user
 .RData
 .Rhistory
+/tables/STAR_Programs_2017_2023_merged.csv
+/tables/STAR_Programs_2017_2023_final_matched.csv
 
 # Folders to ignore
 /data

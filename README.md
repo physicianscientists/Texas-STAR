@@ -9,6 +9,8 @@ The goal of this study is to identify applicant characteristics, disparities, an
 ## **Analysis Steps**
 1. 01_TexasSTAR_analysis.Rmd - main R markdown file for statistics and data visualization.
    * Source: https://www.utsouthwestern.edu/education/medical-school/about-the-school/student-affairs/texas-star.html 
-2. 02_webscraper.ipynb - Jupyter notebook for collecting residency rank data from Doximity.
+2. 02_Doximity_ranker.ipynb - Jupyter notebook for collecting residency rank data from Doximity.
    * Source: https://www.doximity.com/residency/
 3. 03_school_matcher.py - python script to match residency programs by specialty listed in Texas STAR to program names listed in Doximity. Based on fuzzy string matching.
+4. 04_school_matcher.ipynb - Jupyter notebook for concatenating and cleaning all matched names from Doximity and Texas STAR.
+5. 05_rankdom_forest.ipynb - Jupyter notebook modeling a random forest classifier to determine feature importance for different degree paths.

@@ -1143,10 +1143,13 @@ dox_research <- dox %>% dplyr::filter(sort_by == "research-output")
 
 ```{r}
 # Merging programs applied to with selected applicant-level data
-cols_to_merge <- c("STAR.ID", "Specialty", "degrees")
-df_merge <- df_clean[, cols_to_merge]
-programs.dox <- merge(programs, df_merge, by = "STAR.ID", all.x = T)
-programs.dox$program_specialty <- paste0(programs.dox$Program.Institution, "_", programs.dox$Specialty)
+#cols_to_merge <- c("STAR.ID", "Specialty", "degrees")
+#df_merge <- df_clean[, cols_to_merge]
+#programs.dox <- merge(programs, df_merge, by = "STAR.ID", all.x = T)
+#programs.dox$program_specialty <- paste0(programs.dox$Program.Institution, "_", programs.dox$Specialty)
+
+programs.dox <- read.csv(file = "tables/STAR_Programs_2017_2023_final_matched.csv")
+programs.dox$program_specialty <- paste0(programs.dox$Program.Institution.Dox, "_", programs.dox$Specialty)
 
 # Merging doximity rankings by reputation
 programs.dox.reputation <- merge(programs.dox, dox_reputation, by = "program_specialty", all.x = T)
@@ -1252,28 +1255,29 @@ rep.dox.matched <- programs.dox.reputation %>% dplyr::filter(Matched == "Y")
 research.dox.matched <- programs.dox.research %>% dplyr::filter(Matched == "Y")
 
 rep.df <- merge(rep.dox.matched, rep.dox[ , c("STAR.ID", "reputation_rank_mean")], by = "STAR.ID", all.x = T)
+research.df <- merge(research.dox.matched, research.dox[ , c("STAR.ID", "research_rank_mean")], by = "STAR.ID", all.x = T)
 ```
 
 ```{r}
 # Plotting by reputation for students that matched
-reputation_plot <- rep.df %>% dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MSc")) %>% 
+reputation_plot <- rep.df %>% dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")) %>% 
   tidyr::pivot_longer(cols = c("rank", "reputation_rank_mean"), names_to = "apply_match", values_to = "ranks") %>% 
   ggplot(aes(x = degrees, y = ranks, fill = apply_match)) + 
   geom_boxplot(outliers = F) + 
   labs(x = "Degree", y = "School Rank (Reputation)", fill = "Degree", title = "School Rank by Reputation") + 
   theme_classic() +
   theme(plot.title = element_text(hjust = 0.5),
-        legend.position = "right")
-reputation_plot
+        legend.position = "top")
 
 # Plotting by research output for students that matched
-research_plot <- research.dox %>% dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MSc")) %>% 
-  ggplot(aes(x = degrees, y = rank, fill = degrees)) + 
+research_plot <- research.df %>% dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")) %>% 
+  tidyr::pivot_longer(cols = c("rank", "research_rank_mean"), names_to = "apply_match", values_to = "ranks") %>% 
+  ggplot(aes(x = degrees, y = ranks, fill = apply_match)) + 
   geom_boxplot(outliers = F) + 
   labs(x = "Degree", y = "School Rank (Research Output)", fill = "Degree", title = "School Rank by Research Output") + 
   theme_classic() +
   theme(plot.title = element_text(hjust = 0.5),
-        legend.position = "none")
+        legend.position = "top")
 
 # Combining plots
 rep_research_plot <- reputation_plot | research_plot
@@ -1312,23 +1316,95 @@ unmatched_programs <- unmatched_programs %>% dplyr::arrange(specialty, program)
 
 
 
-
+# 4. AAMC MD/PhD Residency Data
 
 ```{r}
-# Finding the program counts
-program_counts <- as.data.frame(table(programs$Program.Institution))
-colnames(program_counts) <- c("program", "counts")
-program_counts <- program_counts %>% dplyr::arrange(desc(counts))
-program_counts$program <- as.character(program_counts$program)
-program_counts$number <- seq(1, nrow(program_counts))
-
-program_counts[2301:2350, 1]
-
-# Optional export to excel
-#write_xlsx(program_counts, path = paste0(cwd, "/tables/program_counts.xlsx"))
+# Importing data from AAMC
+aamc <- read_xlsx("AAMC_data/AAMC_Table-B4_processed.xlsx")
+aamc_totals <- aamc[aamc$specialties == "Total", ]
+aamc_totals$total_active_nomdphd <- aamc_totals$total_active - aamc_totals$mdphd_active
+aamc <- aamc[aamc$specialties != "Total", ]
 ```
 
+```{r}
+# Tidying for plotting
+aamc_totals_plot <- aamc_totals
+aamc_totals_plot$percent_change_totals <- ((aamc_totals_plot$total_active_nomdphd - 78959) / 78959) * 100
+aamc_totals_plot$percent_change_mdphd <- ((aamc_totals_plot$mdphd_active - 2806) / 2806) * 100
+aamc_totals_plot <- aamc_totals_plot %>% 
+  tidyr::pivot_longer(cols = c("percent_change_mdphd", "percent_change_totals"), names_to = "degree", values_to = "percent_change")
+aamc_totals_plot$degree <- plyr::mapvalues(x = aamc_totals_plot$degree, from = c("percent_change_mdphd", "percent_change_totals"), to = c("MD-PhD", "Total (excluding MD-PhD)"))
+aamc_totals_plot$degree <- factor(x = aamc_totals_plot$degree, levels = c("MD-PhD", "Total (excluding MD-PhD)"))
 
+# Plotting total MD/PhD and total MD
+aamc_totals_plot <- aamc_totals_plot %>% 
+  ggplot(aes(x = year, y = percent_change, color = degree)) + 
+  geom_line() + 
+  geom_point() + 
+  scale_x_continuous(breaks = seq(min(aamc_totals_plot$year), max(aamc_totals_plot$year), by = 1)) + 
+  #facet_wrap(~degree) + 
+  labs(y = "percent change (%)", color = "Degree") + 
+  theme_classic() + 
+  theme(strip.background = element_blank())
+print(aamc_totals_plot)
+
+# Saving the plot
+#ggsave(plot = aamc_totals_plot, filename = "figures/AAMC_totals_overtime.png", width = 2300, height = 1500, dpi = 300, units = "px")
+```
+
+```{r}
+specialties_interest <- c("Anesthesiology", "Allergy and Immunology", "Child Neurology", "Dermatology", "Emergency Medicine", "Family Medicine", "Internal Medicine", "Medical Genetics and Genomics",  "Neurological Surgery", "Neurology", "Obstetrics and Gynecology", "Ophthalmology", "Orthopaedic Surgery", "Otolaryngology", "Pathology", "Pediatrics", "Physical Medicine and Rehabilitation", "Plastic Surgery", "Psychiatry", "Radiation Oncology", "Radiology: Diagnostic", "Radiology, Interventional: Integrated",  "Surgery: General", "Urology", "Vascular Surgery: Integrated")
+
+aamc_filt <- aamc[aamc$specialties %in% specialties_interest, ]
+aamc_filt$total_active_nomdphd <- aamc_filt$total_active - aamc_filt$mdphd_active
+aamc_filt <- aamc_filt %>% tidyr::pivot_longer(cols = c("mdphd_active", "total_active_nomdphd"), names_to = "degree", values_to = "counts")
+aamc_filt$degree <- plyr::mapvalues(x = aamc_filt$degree, from = c("mdphd_active", "total_active_nomdphd"), to = c("MD-PhD", "Total (excluding MD-PhD)"))
+aamc_filt$degree <- factor(x = aamc_filt$degree, levels = c("MD-PhD", "Total (excluding MD-PhD)"))
+aamc_filt <- aamc_filt %>% group_by(specialties, degree) %>% 
+  dplyr::summarise(specialty_counts = mean(counts, na.rm = TRUE))
+aamc_filt$specialty_counts <- round(aamc_filt$specialty_counts)
+aamc_filt <- aamc_filt %>% tidyr::pivot_wider(names_from = "degree", values_from = "specialty_counts")
+
+# Making a dataframe matrix 
+aamc_filt <- aamc_filt %>% tibble::column_to_rownames(var = "specialties") %>% as.data.frame.matrix()
+```
+
+```{r}
+# Stats
+fish.results <- fisher.test(aamc_filt, simulate.p.value = T)
+chi.results <- chisq.test(aamc_filt)
+#print(chi.results)
+
+# Posthoc stats
+fish.posthoc <- row_wise_fisher_test(aamc_filt, p.adjust.method = "fdr", detailed = T)
+fish.posthoc <- fish.posthoc %>% dplyr::mutate(
+  representation = dplyr::case_when(
+    p.adj < 0.05 & conf.low > 1 ~ "MD-PhD Overepresented",
+    p.adj < 0.05 & conf.high < 1 ~ "MD-PhD Underrepresented",
+    p.adj > 0.05 ~ "not significant"
+  )
+)
+fish.posthoc$representation <- factor(fish.posthoc$representation, levels = c("MD-PhD Overepresented", "MD-PhD Underrepresented", "not significant"))
+```
+
+```{r}
+# Plotting OR and 95% CIs
+forest_plot <- fish.posthoc %>% 
+  ggplot(aes(x = estimate, xmin = conf.low, xmax = conf.high, y = reorder(group, estimate), color = representation)) + 
+  geom_point() + 
+  geom_errorbarh(height = 0.2) + 
+  geom_text(aes(label = p.adj, x = 8.5), hjust = 0, size = 3) + 
+  geom_vline(aes(xintercept = 1), color = "black", linetype = "dashed") + 
+  scale_x_continuous(n.breaks = 10, limits = c(0, 10)) +  #2.8
+  scale_color_manual(values = c("#cf3e00", "#0053cf", "#5e5e5e")) +
+  labs(x = "Odds Ratio [95% CI]", y = "Specialty", title = "Specialty Outcomes for MD-PhD Relative to MD-Only (AAMC Data)", color = "MD-PhD Representation") + 
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5, size = 12))
+print(forest_plot)
+
+# exporting figure
+#ggsave(plot = forest_plot, filename = "figures/aamc_specialty_forest_plot.png", width = 2500, height = 2000, dpi = 300, units = "px")
+```
 
 
 

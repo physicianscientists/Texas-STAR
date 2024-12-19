@@ -24,7 +24,7 @@ def data_importer():
     
     # Optional filter for specialties that I already matched
     #specialties = ["Anesthesiology", "Child Neurology", "Dermatology", "Emergency Medicine", "Family Medicine", "Internal Medicine"]
-    unmatched = unmatched[unmatched["specialty"]=="Neurological Surgery"]  #change accordingly
+    unmatched = unmatched[unmatched["specialty"]=="Vascular Surgery"]  #change accordingly
     
     print(star.head())
     print(unmatched.head())
@@ -49,7 +49,7 @@ def program_matcher(unmatched, dox):
         specialty = row["specialty"]
         
         # Filtering doximity by specialty and getting a unique list of specialties
-        dox_filt = dox[dox["specialty"].isin(["Neurological Surgery", "Surgery"])]  #==specialty
+        dox_filt = dox[dox["specialty"].isin(["Vascular Surgery", "Surgery"])]  #==specialty change this
         dox_filt = dox_filt["program"].unique()
         
         # Looping over each specialty and appending fuzzy string match scores
@@ -79,7 +79,7 @@ def program_matcher(unmatched, dox):
         
         # User selection of the top match and appending the matched selection to the match list
         # If there is an exact match, pick the selection automatically to speed things up
-        if max_ratio==100.0:
+        if max_ratio>=97.0:
             matched_df = pd.DataFrame(df.iloc[0]).transpose()
             match_list.append(matched_df)
         else:
