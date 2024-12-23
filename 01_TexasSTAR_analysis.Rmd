@@ -16,8 +16,12 @@ library(writexl)
 library(finalfit)
 library(chisq.posthoc.test)
 library(rstatix)
+library(emmeans)
 library(performance)
 library(ggeffects)
+library(gtsummary)
+library(flextable)
+library(RColorBrewer)
 library(car)
 library(ggpubr)
 library(scales)
@@ -248,17 +252,19 @@ table1 <- table1 %>%
 
 
 
-## 3.2 Overall Match outcomes
+## 3.2 Overall Match Outcomes
+
+### 3.2.1 Overall Match
 
 ```{r}
 # Do MD/PhD students have a higher chance of matching?
-overall_match_df <- df_clean %>% dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MSc"))
+overall_match_df <- df_clean %>% dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
 overall_match <- as.data.frame.matrix(table(overall_match_df$degrees, overall_match_df$Matched))
 overall_match <- overall_match %>% dplyr::filter(Yes >= 5 & No >= 5)
 
 # Chi square and fisher
 #chisq.test(overall_match)
-#fisher.test(overall_match, simulate.p.value = F, workspace = 2e7)
+fisher.test(overall_match, simulate.p.value = T)
 
 # Post hoc analysis
 match_rate_fisher <- pairwise_fisher_test(overall_match, p.adjust.method = "fdr", detailed = T)
@@ -275,32 +281,36 @@ table1 <- overall_match_df %>%
 #write_xlsx(x = table1, path = "tables/match_apps.xlsx")
 ```
 
+### 3.2.2 Interviews (unadjusted)
+
 ```{r}
 # Interview info
 cols_to_keep <- c("Applied_Total", "InterviewOffer_Total", "Majority.of.Interview.Offers", "Majority.of.Interviews.Attended", "X..Interviews.Attended", "degrees")
-overall_interview_df <- df_clean[, cols_to_keep] %>% dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MSc"))
+overall_interview_df <- df_clean[, cols_to_keep] %>% dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
 
 # Numerical Variables for interviews
 interview_int_df <- tidyr::pivot_longer(data = overall_interview_df[, c(1, 2, 5, 6)], cols = c("Applied_Total", "InterviewOffer_Total", "X..Interviews.Attended"), names_to = "interview_metric", values_to = "values")
 interview_int_df$interview_metric <- plyr::mapvalues(x = interview_int_df$interview_metric, from = c("Applied_Total", "InterviewOffer_Total", "X..Interviews.Attended"), to = c("Applications", "Interview Offers", "Interviews Attended"))
-interview_int_df$degrees <- factor(x = interview_int_df$degrees, levels = c("MD", "MD-PhD", "MD-MPH", "MD-MSc"))
+interview_int_df$degrees <- factor(x = interview_int_df$degrees, levels = c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
 
 # Testing for normality and equal variances - THIS IS NON-NORMAL Data! 
 #ggqqplot(overall_interview_df$X..Interviews.Attended)
 #shapiro.test(overall_interview_df$Applied_Total)
 #leveneTest(X..Interviews.Attended ~ degrees, overall_interview_df)
 
-# Kruskal-Wallis test and post hoc analysis
+# Kruskal-Wallis test and post hoc analysis: Total Applications
 kruskal_res <- kruskal.test(Applied_Total ~ degrees, data = overall_interview_df)
 pairwise_kruskal <- pairwise.wilcox.test(overall_interview_df$Applied_Total, overall_interview_df$degrees, p.adjust.method = "fdr")
 print(kruskal_res)
 print(pairwise_kruskal)
 
+# Kruskal-Wallis test and post hoc analysis: Interview offers
 kruskal_res <- kruskal.test(InterviewOffer_Total ~ degrees, data = overall_interview_df)
 pairwise_kruskal <- pairwise.wilcox.test(overall_interview_df$InterviewOffer_Total, overall_interview_df$degrees, p.adjust.method = "fdr")
 print(kruskal_res)
 print(pairwise_kruskal)
 
+# Kruskal-Wallis test and post hoc analysis: Interviews attended
 kruskal_res <- kruskal.test(X..Interviews.Attended ~ degrees, data = overall_interview_df)
 pairwise_kruskal <- pairwise.wilcox.test(overall_interview_df$X..Interviews.Attended, overall_interview_df$degrees, p.adjust.method = "fdr")
 print(kruskal_res)
@@ -308,62 +318,392 @@ print(pairwise_kruskal)
 ```
 
 ```{r}
+# Plotting applications, interview offers, and interviews attended
 interview_plot <- interview_int_df %>% ggplot(aes(x = degrees, y = values, fill = degrees)) + 
   geom_boxplot(outliers = F) + 
   facet_wrap(~interview_metric, ncol = 3, scales = "free_y") +
+  scale_fill_brewer(palette = "Set3") +
   labs(x = "", y = "Number of Occurrences", fill = "Degrees", title = "Number of Applications and Interviews per Degree Path") + 
   theme_classic() + 
   theme(axis.text.x = element_text(angle = 45, hjust = 1),
         strip.background = element_blank(),
         plot.title = element_text(hjust = 0.5))
+print(interview_plot)
 
 # exporting figure
-#ggsave(plot = interview_plot, filename = "figures/interview_plot.pdf", width = 2500, height = 1500, dpi = 300, units = "px")
+#ggsave(plot = interview_plot, filename = "figures/interview_plot.pdf", width = 2800, height = 1500, dpi = 300, units = "px")
 ```
 
 ```{r}
-# Linear regression for number of applications vs number of interviews offered in different degree types
-models <- overall_interview_df %>% 
-  dplyr::group_by(degrees) %>% 
-  do(model = lm(InterviewOffer_Total ~ Applied_Total, data = .))
-print(models)
-
-# Summarizing different linear regressions
-coefficients_summary <- models %>%
-  summarise(
-    intercept = coef(model)[1],
-    slope = coef(model)[2]
+# Function to extract the results of a regression model
+model_extracter <- function(m, zt, test_name = NULL) {
+  # Summary of the model
+  print(summary(m))
+  
+  # Extract coefficients as a dataframe
+  coef_df <- data.frame(
+    term = names(coef(m)),
+    estimate = coef(m),
+    std_error = summary(m)$coefficients[,"Std. Error"],
+    zt_value = summary(m)$coefficients[, paste0(zt, " value")],
+    p_value = summary(m)$coefficients[, paste0("Pr(>|", zt, "|)")]
   )
-print(coefficients_summary)
+  
+  # Calculate odds ratios and confidence intervals
+  coef_df$odds_ratio <- exp(coef_df$estimate)
+  
+  # Calculate 95% confidence intervals for odds ratios
+  coef_df$ci_lower <- exp(coef_df$estimate - 1.96 * coef_df$std_error)
+  coef_df$ci_upper <- exp(coef_df$estimate + 1.96 * coef_df$std_error)
+  
+  # Round numeric columns to 3 decimal places
+  coef_df$term <- NULL
+  coef_df_rownames <- row.names(coef_df)
+  coef_df <- sapply(coef_df, as.numeric) %>% as.data.frame()
+  coef_df$terms <- coef_df_rownames
+  coef_df$test <- test_name
+  
+  # Returning
+  return(coef_df)
+}
 
-overall_interview_df %>% ggplot(aes(x = Applied_Total, y = InterviewOffer_Total, color = degrees)) + 
-  geom_point()
+```
+
+
+```{r}
+# Fitting a linear model with interaction of degree path
+model <- lm(X..Interviews.Attended ~ Applied_Total * degrees, data = overall_interview_df)
+
+model_df <- model_extracter(m = model, zt = "t")
+
+# Exporting to excel
+#write_xlsx(x = coef_df, path = "tables/applications_interviews_linreg.xlsx", )
 ```
 
 ```{r}
 # Finding the quantiles to plot (we don't want to include huge outliers with 200+ applications)
 #quantile(x = overall_interview_df$Applied_Total, probs = c(0.01, 0.05, 0.25, 0.5, 0.75, 0.90, 0.95, 0.99))
+#quantile(x = overall_interview_df$X..Interviews.Attended, probs = c(0.01, 0.05, 0.25, 0.5, 0.75, 0.90, 0.95, 0.99))
 
 # Plotting linear regression lines
-lin_reg_plot <- overall_interview_df %>% ggplot(aes(x = Applied_Total, y = InterviewOffer_Total, color = degrees)) +
-  geom_smooth(method = "lm", se = T) + 
-  coord_cartesian(xlim = c(0, 140), ylim = c(5, 30)) + 
+overall_interview_df$degrees <- factor(x = overall_interview_df$degrees, levels = c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
+lin_reg_plot <- overall_interview_df %>% ggplot(aes(x = Applied_Total, y = X..Interviews.Attended, color = degrees)) +
+  geom_smooth(method = "lm", se = T, fill = "lightgrey") + 
+  scale_color_brewer(palette = "Dark2") +
+  coord_cartesian(xlim = c(0, 140), ylim = c(5, 25)) + 
   scale_x_continuous(breaks = scales::pretty_breaks(n = 7), expand = c(0, 0)) + 
-  scale_y_continuous(breaks = scales::pretty_breaks(n = 5), expand = c(0, 0)) + 
-  labs(title = "Linear Regression per Degree", x = "Total Applications", y = "Interview Offers", color = "Degrees") + 
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 6), expand = c(0, 0)) + 
+  labs(title = "Linear Regression per Degree", x = "Total Applications", y = "Interviews Attended", color = "Degrees") + 
   theme_classic() + 
   theme(plot.title = element_text(hjust = 0.5))
+print(lin_reg_plot)
 
 # exporting figure
-#ggsave(plot = lin_reg_plot, filename = "figures/linear_regression_plot.pdf", width = 2000, height = 1500, dpi = 300, units = "px")
+#ggsave(plot = lin_reg_plot, filename = "figures/linear_regression_plot.pdf", width = 1600, height = 1000, dpi = 300, units = "px")
 ```
 
 
+
+### 3.2.3 Interviews (normalized)
 
 ```{r}
-# Number of interviews per degree type
-no_interviews <- df %>% group_by(degrees) %>% summarise(mean_interviews = mean(X..Interviews.Attended))
+# Calculating mean, stdev, median, and IQR for applications, interview offers, and interviews attended per specialty
+spec.app.counts <- df_clean %>% 
+  dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")) %>% 
+  dplyr::group_by(Specialty) %>% 
+  dplyr::summarise(
+    specialty_counts = n(),
+    mean_applications = mean(Applied_Total, na.rm = T),
+    stdev_applications = sd(Applied_Total, na.rm = T),
+    median_applications = median(Applied_Total, na.rm = T),
+    iqr_applications = IQR(Applied_Total, na.rm = T),
+    mean_interview_offers = mean(InterviewOffer_Total, na.rm = T),
+    stdev_interview_offers = sd(InterviewOffer_Total, na.rm = T),
+    median_interview_offers = median(InterviewOffer_Total, na.rm = T),
+    iqr_interview_offers = IQR(InterviewOffer_Total, na.rm = T),
+    mean_interviews_attended = mean(X..Interviews.Attended, na.rm = T),
+    stdev_interviews_attended = sd(X..Interviews.Attended, na.rm = T),
+    median_interviews_attended = median(X..Interviews.Attended, na.rm = T),
+    iqr_interviews_attended = IQR(X..Interviews.Attended, na.rm = T),
+  )
+
+# Filtering specialtys with too low counts to be reliable
+spec.app.counts <- spec.app.counts[spec.app.counts$specialty_counts >= 10, ]
+
+# Exporting to excel
+#write_xlsx(x = spec.app.counts, path = "tables/summarized_app_interview_counts.xlsx")
 ```
+
+```{r}
+# Min-max normalizing after log transformation for right-skewed data. For applications, interview offers, and interviews attended for each specialty
+norm.apps.df <- merge(df_clean, spec.app.counts, by = "Specialty", all.x = T)
+norm.apps.df <- norm.apps.df %>% dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
+
+# Log transformed min-max scaling (good for right-skewed data)
+norm.apps.df$norm_applied_total <- ave(norm.apps.df$Applied_Total, norm.apps.df$Specialty,
+                                       FUN = function(x) {
+                                         logged <- log1p(x)
+                                         (logged - min(logged, na.rm = T)) / (max(logged, na.rm = T) - min(logged, na.rm = T))
+                                       })
+
+norm.apps.df$norm_interview_offers <- ave(norm.apps.df$InterviewOffer_Total, norm.apps.df$Specialty,
+                                          FUN = function(x) {
+                                            logged <- log1p(x)
+                                            (logged - min(logged, na.rm = T)) / (max(logged, na.rm = T) - min(logged, na.rm = T))
+                                            })
+
+norm.apps.df$norm_interviews_attend <- ave(norm.apps.df$X..Interviews.Attended, norm.apps.df$Specialty,
+                                           FUN = function(x) {
+                                             logged <- log1p(x)
+                                             (logged - min(logged, na.rm = T)) / (max(logged, na.rm = T) - min(logged, na.rm = T))
+                                             })
+
+# Factoring
+norm.apps.df$degrees <- factor(x = norm.apps.df$degrees, levels = c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
+```
+
+```{r}
+# Statistics for normalized interview metrics
+# Kruskal-Wallis test and post hoc analysis: Total Applications
+kruskal_res <- kruskal.test(norm_applied_total ~ degrees, data = norm.apps.df)
+pairwise_kruskal <- pairwise.wilcox.test(norm.apps.df$norm_applied_total, norm.apps.df$degrees, p.adjust.method = "fdr")
+print(kruskal_res)
+print(pairwise_kruskal)
+
+# Kruskal-Wallis test and post hoc analysis: Interview offers
+kruskal_res <- kruskal.test(norm_interview_offers ~ degrees, data = norm.apps.df)
+pairwise_kruskal <- pairwise.wilcox.test(norm.apps.df$norm_interview_offers, norm.apps.df$degrees, p.adjust.method = "fdr")
+print(kruskal_res)
+print(pairwise_kruskal)
+
+# Kruskal-Wallis test and post hoc analysis: Interviews attended
+kruskal_res <- kruskal.test(norm_interviews_attend ~ degrees, data = norm.apps.df)
+pairwise_kruskal <- pairwise.wilcox.test(norm.apps.df$norm_interviews_attend, norm.apps.df$degrees, p.adjust.method = "fdr")
+print(kruskal_res)
+print(pairwise_kruskal)
+```
+
+```{r}
+# Cleaning data for plotting
+cols_to_keep <- c("degrees", "norm_applied_total", "norm_interview_offers", "norm_interviews_attend")
+norm.plot.df <- norm.apps.df[ , cols_to_keep] %>% tidyr::pivot_longer(cols = c("norm_applied_total", "norm_interview_offers", "norm_interviews_attend"), names_to = "interview_metric", values_to = "values")
+norm.plot.df$interview_metric <- plyr::mapvalues(x = norm.plot.df$interview_metric, from = c("norm_applied_total", "norm_interview_offers", "norm_interviews_attend"), to = c("Applications", "Interview Offers", "Interviews Attended"))
+norm.plot.df$interview_metric <- factor(x = norm.plot.df$interview_metric, levels = c("Applications", "Interview Offers", "Interviews Attended"))
+
+# Plotting Normalized applications, interview offers, and interviews attended
+interview_plot <- norm.plot.df %>% ggplot(aes(x = degrees, y = values, fill = degrees)) + 
+  geom_boxplot(outliers = F) + 
+  facet_wrap(~interview_metric, ncol = 3, scales = "free_y") +
+  scale_fill_brewer(palette = "Set3") +
+  labs(x = "", y = "Normalized Number of Occurrences", fill = "Degrees", title = "Normalized Number of Applications and Interviews") + 
+  theme_classic() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        strip.background = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+print(interview_plot)
+
+# exporting figure
+#ggsave(plot = interview_plot, filename = "figures/interview_plot_normalized.pdf", width = 2800, height = 1500, dpi = 300, units = "px")
+```
+
+
+
+### 3.2.4 Signals, geographic connections, geographic preferences, and away rotations
+
+```{r}
+# Importing the matched doximity programs file
+pg <- read.csv(file = "tables/STAR_Programs_2017_2023_final_matched.csv", na.strings = "")
+
+# Filtering for students who matched
+matched_ids <- df_clean %>% 
+  dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")) %>% 
+  dplyr::filter(Matched == "Yes") %>% 
+  dplyr::filter(Survey.Year >= 2021) %>% 
+  dplyr::pull(STAR.ID)
+
+pg.filt <- pg %>% dplyr::filter(STAR.ID %in% matched_ids)
+
+# Filtering for non-NA values and factoring
+#pg.filt <- pg.filt[!is.na(pg.filt$Signaled.Program), ]
+pg.filt$Matched <- factor(x = pg.filt$Matched, levels = c("N", "Y"))
+pg.filt$Signaled.Program <- factor(x = pg.filt$Signaled.Program, levels = c("N", "Y"))
+pg.filt$Interview.Offer <- factor(x = pg.filt$Interview.Offer, levels = c("N", "Y"))
+pg.filt$Geographic.Connection <- factor(x = pg.filt$Geographic.Connection, levels = c("N", "Y"))
+pg.filt$Geographic.Preference.ERAS.Supp.App <- factor(x = pg.filt$Geographic.Preference.ERAS.Supp.App, levels = c("N", "Y"))
+pg.filt$Away.Rotation <- factor(x = pg.filt$Away.Rotation, levels = c("N", "Y"))
+pg.filt$degrees <- factor(x = pg.filt$degrees, levels = c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
+```
+
+```{r}
+# LR on Interview Offers
+model_outcome_list <- list()
+
+# Logistic regression of signaling - univariate
+model <- glm(Interview.Offer ~ Signaled.Program, data = pg.filt, family = "binomial")
+model_outcome_list[["signaled program univariate"]] <- model_extracter(m = model, zt = "z", test_name = "signaled program univariate")
+
+# Logistic regression of Geographic Connection - univariate
+model <- glm(Interview.Offer ~ Geographic.Connection, data = pg.filt, family = "binomial")
+model_outcome_list[["geographic connection univariate"]] <- model_extracter(m = model, zt = "z", test_name = "geographic connection univariate")
+
+# Logistic regression of Geographic Preference - univariate
+model <- glm(Interview.Offer ~ Geographic.Preference.ERAS.Supp.App, data = pg.filt, family = "binomial")
+model_outcome_list[["geographic preference univariate"]] <- model_extracter(m = model, zt = "z", test_name = "geographic preference univariate")
+
+# Logistic regression of Away Rotations - univariate
+model <- glm(Interview.Offer ~ Away.Rotation, data = pg.filt, family = "binomial")
+model_outcome_list[["away rotation univariate"]] <- model_extracter(m = model, zt = "z", test_name = "away rotation univariate")
+
+# Multivariate without interactors
+model <- glm(Interview.Offer ~ Signaled.Program + Geographic.Connection + Geographic.Preference.ERAS.Supp.App + Away.Rotation, data = pg.filt, family = "binomial")
+model_outcome_list[["multivariate"]] <- model_extracter(m = model, zt = "z", test_name = "multivariate")
+
+# Multivariate WITH degree path as interactors
+model <- glm(Interview.Offer ~ Signaled.Program * degrees + Geographic.Connection * degrees + Geographic.Preference.ERAS.Supp.App * degrees + Away.Rotation * degrees, data = pg.filt, family = "binomial")
+model_outcome_list[["multivariate with interactors"]] <- model_extracter(m = model, zt = "z", test_name = "multivariate with interactors")
+
+# Making a fancy table to export to word
+#fancy_table <- tbl_regression(model, exponentiate = T, show_single_row = c("Signaled.Program", "Geographic.Connection", "Geographic.Preference.ERAS.Supp.App", "Away.Rotation"))
+#fancy_table %>% as_flex_table() %>% save_as_docx(path = "tables/interview_offers_logistic_regression.docx")
+
+# Merging all results together
+model_df_interviews <- dplyr::bind_rows(model_outcome_list)
+model_df_interviews$outcome <- "interview_offer"
+
+# Checking residuals using DHARMa
+#simulation_df <- simulateResiduals(model, plot = T)
+
+# Exporting the dataframe
+#write_xlsx(x = model_df_interviews, path = "tables/interview_offers_logistic_regression.xlsx")
+```
+
+```{r}
+# LR on Matches
+model_outcome_list <- list()
+
+# Logistic regression of signaling - univariate
+model <- glm(Matched ~ Signaled.Program, data = pg.filt, family = "binomial")
+model_outcome_list[["signaled program univariate"]] <- model_extracter(m = model, zt = "z", test_name = "signaled program univariate")
+
+# Logistic regression of Geographic Connection - univariate
+model <- glm(Matched ~ Geographic.Connection, data = pg.filt, family = "binomial")
+model_outcome_list[["geographic connection univariate"]] <- model_extracter(m = model, zt = "z", test_name = "geographic connection univariate")
+
+# Logistic regression of Geographic Preference - univariate
+model <- glm(Matched ~ Geographic.Preference.ERAS.Supp.App, data = pg.filt, family = "binomial")
+model_outcome_list[["geographic preference univariate"]] <- model_extracter(m = model, zt = "z", test_name = "geographic preference univariate")
+
+# Logistic regression of Away Rotations - univariate
+model <- glm(Matched ~ Away.Rotation, data = pg.filt, family = "binomial")
+model_outcome_list[["away rotation univariate"]] <- model_extracter(m = model, zt = "z", test_name = "away rotation univariate")
+
+# Multivariate without interactors
+model <- glm(Matched ~ Signaled.Program + Geographic.Connection + Geographic.Preference.ERAS.Supp.App + Away.Rotation, data = pg.filt, family = "binomial")
+model_outcome_list[["multivariate"]] <- model_extracter(m = model, zt = "z", test_name = "multivariate")
+
+# Multivariate WITH degree path as interactors
+model <- glm(Matched ~ Signaled.Program * degrees + Geographic.Connection * degrees + Geographic.Preference.ERAS.Supp.App * degrees + Away.Rotation * degrees, data = pg.filt, family = "binomial")
+model_outcome_list[["multivariate with interactors"]] <- model_extracter(m = model, zt = "z", test_name = "multivariate with interactors")
+
+# Making a fancy table to export to word
+#fancy_table <- tbl_regression(model, exponentiate = T, show_single_row = c("Signaled.Program", "Geographic.Connection", "Geographic.Preference.ERAS.Supp.App", "Away.Rotation"))
+#fancy_table %>% as_flex_table() %>% save_as_docx(path = "tables/matches_logistic_regression.docx")
+
+# Merging all results together
+model_df_matches <- dplyr::bind_rows(model_outcome_list)
+model_df_matches$outcome <- "match"
+
+# Checking residuals using DHARMa
+#simulation_df <- simulateResiduals(model, plot = T)
+
+# Exporting the dataframe
+#write_xlsx(x = model_df_matches, path = "tables/matches_logistic_regression.xlsx")
+```
+
+```{r}
+# Graphing Odds Ratios for interview offers and matched based on signaling, geographic connections, geographic preferences, and away rotations (with degree path as an interactor)
+model_df <- dplyr::bind_rows(model_df_interviews, model_df_matches)
+
+# Making new names for terms
+terms <- c("Signaled.ProgramY", "Geographic.ConnectionY", 
+           "Geographic.Preference.ERAS.Supp.AppY", "Away.RotationY",
+           "degreesMD-PhD", "degreesMD-MPH", "degreesMD-MBA", "degreesMD-MSc",
+           "Signaled.ProgramY:degreesMD-PhD", "Signaled.ProgramY:degreesMD-MPH",
+           "Signaled.ProgramY:degreesMD-MBA", "Signaled.ProgramY:degreesMD-MSc",
+           "degreesMD-PhD:Geographic.ConnectionY", 
+           "degreesMD-MPH:Geographic.ConnectionY",
+           "degreesMD-MBA:Geographic.ConnectionY", 
+           "degreesMD-MSc:Geographic.ConnectionY",
+           "degreesMD-PhD:Geographic.Preference.ERAS.Supp.AppY",
+           "degreesMD-MPH:Geographic.Preference.ERAS.Supp.AppY",
+           "degreesMD-MBA:Geographic.Preference.ERAS.Supp.AppY",
+           "degreesMD-MSc:Geographic.Preference.ERAS.Supp.AppY",
+           "degreesMD-PhD:Away.RotationY", "degreesMD-MPH:Away.RotationY",
+           "degreesMD-MBA:Away.RotationY", "degreesMD-MSc:Away.RotationY")
+
+new_terms <- c("Signaled Program", "Geographic Connection", "Geographic Preference", "Away Rotation",
+               "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc",
+               "Signaled Program × MD-PhD", "Signaled Program × MD-MPH",
+               "Signaled Program × MD-MBA", "Signaled Program × MD-MSc",
+               "Geographic Connection × MD-PhD", "Geographic Connection × MD-MPH",
+               "Geographic Connection × MD-MBA", "Geographic Connection × MD-MSc",
+               "Geographic Preference × MD-PhD", "Geographic Preference × MD-MPH",
+               "Geographic Preference × MD-MBA", "Geographic Preference × MD-MSc",
+               "Away Rotation × MD-PhD", "Away Rotation × MD-MPH",
+               "Away Rotation × MD-MBA", "Away Rotation × MD-MSc")
+
+# Tidying before plotting
+model_df <- model_df %>% 
+  dplyr::filter(test == "multivariate with interactors") %>% 
+  dplyr::filter(terms != "(Intercept)")
+
+model_df$terms <- plyr::mapvalues(x = model_df$terms, from = terms, to = new_terms)
+model_df$terms <- factor(x = model_df$terms, levels = rev(new_terms))
+model_df$outcome <- factor(model_df$outcome, levels = c("interview_offer", "match"))
+model_df <- model_df %>% dplyr::mutate(
+  regulation = dplyr::case_when(
+    ci_lower > 1 & p_value < 0.05 ~ "Overrepresented",
+    ci_upper < 1 & p_value < 0.05 ~ "Underrepresented",
+    p_value >= 0.05 ~ "not significant"
+  )
+)
+model_df$regulation <- factor(model_df$regulation, levels = c("Overrepresented", "Underrepresented", "not significant"))
+model_df$p_value <- format(x = model_df$p_value, digits = 2)
+```
+
+```{r}
+# Plotting a forest plot
+forest_plot <- model_df %>% 
+  ggplot(aes(x = odds_ratio, xmin = ci_lower, xmax = ci_upper, y = terms, color = regulation)) + 
+  geom_point() + 
+  geom_errorbarh(height = 0.2) + 
+  #geom_text(aes(label = p_value, x = 18), hjust = 0, size = 3) + 
+  facet_wrap(~outcome, ncol = 2) +
+  geom_vline(aes(xintercept = 1), color = "black", linetype = "dashed") + 
+  scale_x_continuous(n.breaks = 5, limits = c(0, 17)) +
+  scale_color_manual(values = c("#eb2323", "#2e66ff", "#525252")) +
+  labs(x = "Odds Ratio [95% CI]", y = "Predictors", title = "Logistic Regression: Interview Offers and Matches", color = "Odds") + 
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5, size = 12),
+        strip.background = element_blank())
+print(forest_plot)
+
+# Saving the figure
+#ggsave(plot = forest_plot, filename = "figures/logistic_regression_interviews_matches.pdf", width = 2400, height = 2400, dpi = 300, units = "px")
+```
+
+```{r}
+# Feature Importances for multivariate LR predicting interview offers with degree path as interactors
+model_interviews <- glm(Interview.Offer ~ Signaled.Program + Geographic.Connection + Geographic.Preference.ERAS.Supp.App + Away.Rotation, data = pg.filt, family = "binomial")
+car::Anova(model_interviews)
+
+# Feature Importances for multivariate LR predicting matches with degree path as interactors
+model_matches <- glm(Matched ~ Signaled.Program + Geographic.Connection + Geographic.Preference.ERAS.Supp.App + Away.Rotation, data = pg.filt, family = "binomial")
+car::Anova(model_matches)
+```
+
+
+
 
 
 
