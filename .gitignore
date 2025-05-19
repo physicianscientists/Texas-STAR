@@ -1,0 +1,23 @@
+# Folders to ignore
+.ipynb_checkpoints/
+.Rproj.user/
+AAMC_data/
+data/
+dox_matching/
+dox_rankings/
+manuscript/
+posters/
+
+# Files to ignore
+tables/reputation_doximity_ranks.xlsx
+tables/rf_cv_model.pickle
+tables/df_clean.xlsx
+tables/texasSTAR_unique_programs.csv
+tables/unmatched_unique_programs.csv
+tables/STAR_Programs_2017_2023_final_matched.csv
+tables/STAR_Programs_2017_2023_merged.csv
+.RData
+.Rhistory
+2024-07-29_Texas-STAR.Rproj
+dox_star_error_tracker.xlsx
+

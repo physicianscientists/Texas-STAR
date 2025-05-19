@@ -1,0 +1,3426 @@
+---
+title: "TexasSTAR_analysis"
+author: "Daniel Brock"
+date: "2024-08-04"
+output: html_document
+---
+
+# 0. Setup
+
+```{r setup, include=FALSE}
+# Importing requiring Packages
+library(plyr)
+library(tidyverse)
+library(ggbreak)
+library(readxl)
+library(writexl)
+library(finalfit)
+library(chisq.posthoc.test)
+library(rstatix)
+library(emmeans)
+library(performance)
+library(ggeffects)
+library(gtsummary)
+library(flextable)
+library(psych)
+library(RColorBrewer)
+library(car)
+library(ggpubr)
+library(scales)
+library(patchwork)
+library(ggpubr)
+library(DHARMa)
+library(MASS)
+library(qs2)
+library(ggforce)
+library(ggforestplot)
+library(wesanderson)
+
+# Setting the working director
+cwd <- getwd()
+setwd(cwd)
+```
+
+
+
+# 1. Importing datasets
+
+```{r}
+# Applicant-level information
+df <- read.csv(file = "data/STAR_Responses_2017_2023.csv", na.strings = "N/A")
+df$degrees <- paste0(df$Degree, "-", df$Other.Degrees)
+df$degrees <- plyr::mapvalues(x = df$degrees, from = c("DO-", "MD-"), to = c("DO", "MD"))
+
+# Programs applied to and interviewed at per applicant
+programs <- read.csv(file = "data/STAR_Programs_2017_2023.csv")
+```
+
+
+
+# 2. Data wrangling
+
+```{r}
+df_clean <- df %>% mutate(
+  
+  # Making specialty a factor
+  Specialty = Specialty %>% 
+    factor(levels = sort(unique(Specialty))),
+  
+  # Making public schools a factor
+  Public_School = Public_School %>% 
+    factor(levels = c("No", "Yes")),
+  
+  # Making Ivy status a factor
+  IvyP = IvyP %>% 
+    factor(levels = c("No", "Yes")) %>% 
+    ff_label("Ivy League"),
+  
+  # Making match status a factor
+  Matched = Matched %>% 
+    plyr::mapvalues(from = c("N", "Y"), to = c("No", "Yes")) %>% 
+    factor(levels = c("No", "Yes")), 
+
+  # Making home state a factor
+  Home.State = Home.State %>% 
+    factor(levels = sort(unique(Home.State))),
+  
+  # Making home region a factor
+  Home.Region = Home.Region %>% 
+    plyr::mapvalues(from = "", to = NA) %>% 
+    plyr::mapvalues(from = c("CGSA", "NEGSA", "SGSA", "WGSA"), to = c("Central", "Northeast", "South", "West")) %>% 
+    factor(levels = c("Northeast", "Central", "South", "West")),
+    
+  # Making step1 ranges a factor
+  Step.1 = Step.1 %>% 
+    factor(levels = c("190-194", "195-199", "200-204", "205-209", "210-214", "215-219", "220-224", "225-229", "230-234", "235-239", "240-244", "245-249", "250-254", "255-259", "260-264", "265-269", "270 or higher")) %>% 
+    ff_label("Step 1 Score"),
+  
+  # Making step2 ranges a factor
+  Step.2.CK = Step.2.CK %>% 
+    factor(levels = c("200-204", "205-209", "210-214", "215-219", "220-224", "225-229", "230-234", "235-239", "240-244", "245-249", "250-254", "255-259", "260-264", "265-269", "270 or higher")) %>% 
+    ff_label("Step 2 Score"),
+  
+  # Binning STEP2 CK Release Dates
+  Release...Step.2.CK = Release...Step.2.CK %>% plyr::mapvalues(from = "", to = NA),
+  Step.2.CK.release = 
+    dplyr::case_when(
+      Release...Step.2.CK %in% c("Mid September", "Late September", "Early October", "Mid October") ~ "Early",
+      Release...Step.2.CK %in% c("Late October", "Early November", "Mid November") ~ "Mid",
+      Release...Step.2.CK %in% c("Late November", "Early December", "Mid December", "Late December", "Early January", "Mid January", "Late January", "After Rank List Submission") ~ "Late"
+    ) %>% factor(levels = c("Early", "Mid", "Late")),
+  
+  # Changing Cumulative Quartile into integers
+  Cumulative.Quartile = Cumulative.Quartile %>% 
+    plyr::mapvalues(from = c("1st", "2nd", "3rd", "4th"), to = c(1, 2, 3, 4)),
+  
+  # Making honors a factor
+  Honors.A.This.Specialty = Honors.A.This.Specialty %>% 
+    plyr::mapvalues(from = "", to = NA) %>% 
+    factor(levels = c("No", "Yes")) %>% 
+    ff_label("Honors in Specialty of Choice"),
+  
+  # Making AOA status a factor
+  AOA.Sigma = AOA.Sigma %>% 
+    factor(levels = c("No", "Yes", "No School Chapter")) %>% 
+    ff_label("AOA"),
+  
+  # Making gold humanism a factor
+  GHHS = GHHS %>% 
+    factor(levels = c("No", "Yes", "No School Chapter")) %>% 
+    ff_label("Gold Humanism Honors Society"),
+  
+  # Making couples matching a factor
+  Couples.Match = Couples.Match %>% 
+    factor(levels = c("No", "Yes")),
+  
+  # Making degree a factor - save for later...
+  
+  # Making taking a research year a factor
+  Research.Year = Research.Year %>% 
+    factor(levels = c("No", "Yes")),
+  
+  # Making taking a leave of absence year a factor
+  Absence.Year = Absence.Year %>% 
+    factor(levels = c("No", "Yes")),
+  
+  # Making required to remediate a factor
+  Required.to.Remediate = Required.to.Remediate %>% 
+    factor(levels = c("No", "Yes")),
+  
+  # Making pass attempt for step1 a factor 
+  Pass.Attempt...Step.1 = Pass.Attempt...Step.1 %>% 
+    plyr::mapvalues(from = c(""), to = c(NA)) %>% 
+    factor(levels = c("1st", "2nd", "3rd")) %>% 
+    ff_label("Step1 Pass Attempt"),
+  
+  # Making pass attempt for step2ck a factor 
+  Pass.Attempt...Step.1 = Pass.Attempt...Step.2.CK %>% 
+    plyr::mapvalues(from = c(""), to = c(NA)) %>% 
+    factor(levels = c("1st", "2nd", "3rd")) %>% 
+    ff_label("Step2CK Pass Attempt"),
+  
+  # Making pass attempt for step2cs a factor 
+  Pass.Attempt...Step.1 = Pass.Attempt...Step.2.CS %>% 
+    plyr::mapvalues(from = c(""), to = c(NA)) %>% 
+    factor(levels = c("1st", "2nd", "3rd")) %>% 
+    ff_label("Step2CS Pass Attempt"),
+  
+  # Making the majority of interview offers a factor
+  Majority.of.Interview.Offers = Majority.of.Interview.Offers %>% 
+    factor(levels = c("Late September (before MSPE release)", "Promptly after Oct 1 (MSPE release)", "Early October", "Mid October", "Late October", "Early November", "Mid November", "Late November", "Early December", "Mid December")),
+  
+  # Making the majority of interviews attended a factor
+  Majority.of.Interviews.Attended = Majority.of.Interviews.Attended %>% 
+    factor(levels = c("October", "November", "December", "January", "February")),
+  
+  # Making interview cost a factor
+  Interview.Cost = Interview.Cost %>% 
+    plyr::mapvalues(from = 
+                      c("< $500", "<$500", "$500-$999", "$1000-$1499", "$1500-$1999", "$2000-$2499", "$2500-$2999", "$3000-$3499", "$3500-$3999", "$4000-$4499", "$4500-$4999", "$5000-$5499", "$5500-$5999", "$6000-$6499", "$6500-$6999", "$7000-$7499", "$7500-$7999", "$8000-$8499", "$8500-$8999", "$9000-$9499", "$9500-$9999", "$10000-$10499", "$10500-$10999", "$11000-$11499", "$11500-$11599", "$12000 and above"), 
+                    to = 
+                      c("<$1000", "<$1000", "<$1000", "$1000-$1999", "$1000-$1999", "$2000-$2999", "$2000-$2999", "$3000-$3999", "$3000-$3999", "$4000-$4999", "$4000-$4999", "$5000-$5999", "$5000-$5999", "$6000-$6999", "$6000-$6999", "$7000-$7999", "$7000-$7999", "$8000-$8999", "$8000-$8999", "$9000-$9999", "$9000-$9999", "$10000-$10999", "$10000-$10999", "$11000-$11999", "$11000-$11999", ">$12000")) %>% 
+    factor(levels = c("<$1000", "$1000-$1999", "$2000-$2999", "$3000-$3999", "$4000-$4999", "$5000-$5999", "$6000-$6999", "$7000-$7999", "$8000-$8999", "$9000-$9999", "$10000-$10999", "$11000-$11999", ">$12000")),
+  
+  # Making Application fees a factor
+  Application.Fees = Application.Fees %>% 
+    plyr::mapvalues(from = c("$3500 and above"), to = c(">$3500")) %>% 
+    factor(levels = c("<$500", "$500-$999", "$1000-$1499", "$1500-$1999", "$2000-$2499", "$2500-$2999", "$3000-$3499", ">$3500")),
+  
+  # Making virtual interview costs a factor
+  Virtual.Interview.Cost = Virtual.Interview.Cost %>% 
+    plyr::mapvalues(from = c("< $50", "> $300"), to = c("<$50", ">$300")) %>% 
+    factor(levels = c("<$50", "$50-$100", "$101-$150", "$151-$200", "$201-$250", "$251-$300", ">$300")),
+  
+  # Making other costs a factor
+  Other.Costs = Other.Costs %>% 
+    plyr::mapvalues(from = 
+                      c("< $500", "<$500", "$500-$999", "$1000-$1499", "$1500-$1999", "$2000-$2499", "$2500-$2999", "$3000-$3499", "$3500-$3999", "$4000-$4499", "$4500-$4999", "$5000-$5499", "$5500-$5999", "$6000-$6499", "$6500-$6999", "$7000-$7499", "$7500-$7999", "$8000-$8499", "$8500-$8999", "$9000-$9499", "$9500-$9999", "$10000 and above"), 
+                    to = 
+                      c("<$1000", "<$1000", "<$1000", "$1000-$1999", "$1000-$1999", "$2000-$2999", "$2000-$2999", "$3000-$3999", "$3000-$3999", "$4000-$4999", "$4000-$4999", "$5000-$5999", "$5000-$5999", "$6000-$6999", "$6000-$6999", "$7000-$7999", "$7000-$7999", "$8000-$8999", "$8000-$8999", "$9000-$9999", "$9000-$9999",  ">$10000")) %>% 
+    factor(levels = c("<$1000", "$1000-$1999", "$2000-$2999", "$3000-$3999", "$4000-$4999", "$5000-$5999", "$6000-$6999", "$7000-$7999", "$8000-$8999", "$9000-$9999", ">$10000")),
+  
+  # Making Total costs a factor
+  Total.Costs = Total.Costs %>% 
+    plyr::mapvalues(from = 
+                      c("< $500", "<$500", "$500-$999", "$1000-$1499", "$1500-$1999", "$2000-$2499", "$2500-$2999", "$3000-$3499", "$3500-$3999", "$4000-$4499", "$4500-$4999", "$5000-$5499", "$5500-$5999", "$6000-$6499", "$6500-$6999", "$7000-$7499", "$7500-$7999", "$8000-$8499", "$8500-$8999", "$9000-$9499", "$9500-$9999", "$10000-$10499", "$10500-$10999", "$11000-$11499", "$11500-$11999", "$12000-$12499", "$12500-$12999", "$13000-$13499", "$13500-$13999", "$14000-$14499", "$14500-$14999", "$15000-$15499", "$15500-$15999", "$16000-$16499", "$16500-$16999", "$17000-$17499", "$17500-$17999", "$18000-$18499", "$18500-$18999", "$19000-$19499", "$19500-$19999", "$20000-$20499", "$20500-$20999", "$21000-$21499", "$21500-$21999", "$22000-$22499", "$22500-$22999", "$23000-$23499", "$23500-$23999", "$24000-$24499", "$24500-$24999", "$25000 and above"),
+                    to = 
+                      c("<$1000", "<$1000", "<$1000", "$1000-$1999", "$1000-$1999", "$2000-$2999", "$2000-$2999", "$3000-$3999", "$3000-$3999", "$4000-$4999", "$4000-$4999", "$5000-$5999", "$5000-$5999", "$6000-$6999", "$6000-$6999", "$7000-$7999", "$7000-$7999", "$8000-$8999", "$8000-$8999", "$9000-$9999", "$9000-$9999", "$10000-$10999", "$10000-$10999", "$11000-$11999", "$11000-$11999", "$12000-$12999", "$12000-$12999", "$13000-$13999", "$13000-$13999", "$14000-$14999", "$14000-$14999", "$15000-$15999", "$15000-$15999", "$16000-$16999", "$16000-$16999", "$17000-$17999", "$17000-$17999", "$18000-$18999", "$18000-$18999", "$19000-$19999", "$19000-$19999", "$20000-$20999", "$20000-$20999", "$21000-$21999", "$21000-$21999", "$22000-$22999", "$22000-$22999", "$23000-$23999", "$23000-$23999", "$24000-$24999", "$24000-$24999", ">$25000")) %>% 
+    factor(levels = c("<$1000", "$1000-$1999", "$2000-$2999", "$3000-$3999", "$4000-$4999", "$5000-$5999", "$6000-$6999", "$7000-$7999", "$8000-$8999", "$9000-$9999", "$10000-$10999", "$11000-$11999", "$12000-$12999", "$13000-$13999", "$14000-$14999", "$15000-$15999", "$16000-$16999", "$17000-$17999", "$18000-$18999", "$19000-$19999", "$20000-$20999", "$21000-$21999", "$22000-$22999", "$23000-$23999", "$24000-$24999", ">$25000")),
+  
+  # Making Virtual Environment a factor 
+  Virtual.Environment = Virtual.Environment %>% 
+    factor(levels = c("Strongly Agree", "Agree", "Undecided", "Disagree", "Strongly Disagree")),
+  
+  # Making ERAS supplemental a factor 
+  ERAS.Supplemental = ERAS.Supplemental %>% 
+    factor(levels = c("Strongly Agree", "Agree", "Undecided", "Disagree", "Strongly Disagree")),
+  
+  # Making Demographic Willingness a factor
+  Demographic.Willingness = Demographic.Willingness %>% 
+    plyr::mapvalues(from = c("N", "Y"), to = c("No", "Yes")) %>% 
+    factor(levels = c("No", "Yes")),
+  
+  # Making age group a factor
+  Age.Group = Age.Group %>% 
+    plyr::mapvalues(from = c("< 25", ">39"), to = c("<25", ">40")) %>% 
+    factor(levels = c("<25", "25-27", "28-30", "31-33", "34-36", "37-39", ">40")),
+  
+  # making sexual orientation a factor
+  Sexual.Orientation = Sexual.Orientation %>% 
+    factor(levels = c("Male", "Female", "Intersex", "Prefer not to answer")) %>% 
+    ff_label("Gender"),
+  
+  # Making race/ethncity a factor
+  Race.Ethnicity = Race.Ethnicity %>% 
+    plyr::mapvalues(from = c("N", "Y"), to = c("No", "Yes")) %>% 
+    factor(levels = c("No", "Yes")) %>% 
+    ff_label("Underrepresented in Medicine"),
+  
+  # Making first generation college a factor
+  First.Generation.College = First.Generation.College %>% 
+    plyr::mapvalues(from = c("N", "Y"), to = c("No", "Yes")) %>% 
+    factor(levels = c("No", "Yes")),
+  
+  # Making food & housing insecurity a factor
+  Food.Housing.Insecurity = Food.Housing.Insecurity %>% 
+    plyr::mapvalues(from = c("N", "Y"), to = c("No", "Yes")) %>% 
+    factor(levels = c("No", "Yes"))
+)
+
+# Interview success rate (%)
+df_clean$interview_percent <- (df_clean$InterviewOffer_Total / df_clean$Applied_Total) * 100
+```
+
+
+
+# 3. Demographics
+
+## 3.1 Table 1 basic demographic statistics
+
+```{r}
+# Dependent and explanatory variables
+dependent = "degrees"
+explanatory = c("Specialty", "Public_School", "IvyP", "Applied_Total", "InterviewOffer_Total", "Matched", "Step.1", "Step.2.CK", "Cumulative.Quartile", "Quartile.Rank", "X..Honored.Clerkships", "Honors.A.This.Specialty", "AOA.Sigma", "GHHS", "Couples.Match", "X..Research.Experiences", "X..Abstracts..Pres..Posters", "X..Peer.Rev.Publications", "X..Volunteer.Experiences", "X..Leadership.Positions", "Required.to.Remediate", "Pass.Attempt...Step.1", "Pass.Attempt...Step.2.CK", "Pass.Attempt...Step.2.CS", "Majority.of.Interview.Offers", "Majority.of.Interviews.Attended", "X..Interviews.Attended", "Interview.Cost", "Application.Fees", "Virtual.Interview.Cost", "Other.Costs", "Virtual.Environment", "ERAS.Supplemental", "Demographic.Willingness", "Age.Group", "Sexual.Orientation", "Race.Ethnicity", "First.Generation.College", "Food.Housing.Insecurity")
+
+table1 <- df_clean[df_clean$degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"), ]  #filtering for MD students whose group > 1000 for now
+
+table1 <- table1 %>% 
+  summary_factorlist(
+    dependent = dependent, explanatory = explanatory,
+    add_col_totals = TRUE, include_col_totals_percent = TRUE, p = TRUE, cont = "median",
+    p_cat = "chisq"
+    #cont = "median", p = TRUE, p_cat = "chisq", digits = 2, na_include = TRUE, 
+  )
+
+# Optional export to excel
+#write_xlsx(table1, path = paste0(cwd, "/tables/table1.xlsx"))
+```
+
+
+
+## 3.2 Demographic Analysis
+
+```{r}
+# Finalfit table for demographic factors
+pred_factors <- c("Age.Group", "Sexual.Orientation", "Race.Ethnicity", "Food.Housing.Insecurity", "First.Generation.College", "Home.Region", "Public_School", "IvyP")
+dual_degrees <- c("MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")
+
+df_list <- list()
+for (predictor in pred_factors) {
+  print(predictor)
+  demographics_table <- df_clean %>% dplyr::filter(degrees %in% c("MD", dual_degrees)) %>% 
+    summary_factorlist(dependent = "degrees", explanatory = c(predictor), 
+                       add_col_totals = TRUE, include_col_totals_percent = TRUE, 
+                       p = TRUE, cont = "median", p_cat = "chisq")
+  demographics_table$demographic <- predictor
+  df_list[[predictor]] <- demographics_table
+}
+demo_df <- dplyr::bind_rows(df_list)
+
+# Exporting to excel
+#write_xlsx(x = demo_df, path = "tables/demographics.xlsx")
+```
+
+```{r}
+# Fisher and pairwise stuff
+
+# Age groups
+df_list <- list()
+for (degree in dual_degrees) {
+  dt <- df_clean %>% dplyr::filter(degrees %in% c("MD", degree)) %>% dplyr::filter(!is.na(Age.Group))
+  dt <- table(dt$Age.Group, dt$degrees) %>% as.data.frame.matrix()
+  dt <- dt[ , c(2, 1)]
+  print(degree)
+  print(fisher.test(dt, simulate.p.value = T))
+  #print(chisq.test(dt))
+  fisher.posthoc <- row_wise_fisher_test(dt, p.adjust.method = "fdr", detailed = T)
+  fisher.posthoc$degree <- degree
+  fisher.posthoc$predictor <- "Age"
+  df_list[[degree]] <- fisher.posthoc
+}
+demo_age <- dplyr::bind_rows(df_list)
+
+# Sexual Orientation
+df_list <- list()
+for (degree in dual_degrees) {
+  dt <- df_clean %>% dplyr::filter(degrees %in% c("MD", degree)) %>% dplyr::filter(Sexual.Orientation %in% c("Male", "Female"))
+  dt$Sexual.Orientation <- factor(x = dt$Sexual.Orientation, levels = c("Male", "Female"))
+  dt <- table(dt$Sexual.Orientation, dt$degrees) %>% as.data.frame.matrix()
+  dt2 <- dt[ , c(2, 1)]
+  print(degree)
+  print(fisher.test(dt, simulate.p.value = T))
+  fisher.posthoc <- row_wise_fisher_test(dt2, p.adjust.method = "fdr", detailed = T)
+  fisher.posthoc$degree <- degree
+  fisher.posthoc$predictor <- "Sex"
+  df_list[[degree]] <- fisher.posthoc
+}
+demo_sex <- dplyr::bind_rows(df_list)
+
+# Race/Ethnicity
+df_list <- list()
+for (degree in dual_degrees) {
+  dt <- df_clean %>% dplyr::filter(degrees %in% c("MD", degree)) %>% dplyr::filter(!is.na(Race.Ethnicity))
+  dt <- table(dt$Race.Ethnicity, dt$degrees) %>% as.data.frame.matrix()
+  dt2 <- dt[ , c(2, 1)]
+  print(degree)
+  print(fisher.test(dt, simulate.p.value = T))
+  fisher.posthoc <- row_wise_fisher_test(dt2, p.adjust.method = "fdr", detailed = T)
+  fisher.posthoc$degree <- degree
+  fisher.posthoc$predictor <- "URM Status"
+  df_list[[degree]] <- fisher.posthoc
+}
+demo_urm <- dplyr::bind_rows(df_list)
+
+# Food / Housing Insecurity
+df_list <- list()
+for (degree in dual_degrees) {
+  dt <- df_clean %>% dplyr::filter(degrees %in% c("MD", degree)) %>% dplyr::filter(!is.na(Food.Housing.Insecurity))
+  dt <- table(dt$Food.Housing.Insecurity, dt$degrees) %>% as.data.frame.matrix()
+  dt2 <- dt[ , c(2, 1)]
+  print(degree)
+  print(fisher.test(dt, simulate.p.value = T))
+  fisher.posthoc <- row_wise_fisher_test(dt2, p.adjust.method = "fdr", detailed = T)
+  fisher.posthoc$degree <- degree
+  fisher.posthoc$predictor <- "Food/Housing Insecurity"
+  df_list[[degree]] <- fisher.posthoc
+}
+demo_food_housing <- dplyr::bind_rows(df_list)
+
+# First Generation
+df_list <- list()
+for (degree in dual_degrees) {
+  dt <- df_clean %>% dplyr::filter(degrees %in% c("MD", degree)) %>% dplyr::filter(!is.na(First.Generation.College))
+  dt <- table(dt$First.Generation.College, dt$degrees) %>% as.data.frame.matrix()
+  dt2 <- dt[ , c(2, 1)]
+  print(degree)
+  print(fisher.test(dt, simulate.p.value = T))
+  fisher.posthoc <- row_wise_fisher_test(dt2, p.adjust.method = "fdr", detailed = T)
+  fisher.posthoc$degree <- degree
+  fisher.posthoc$predictor <- "First Generation"
+  df_list[[degree]] <- fisher.posthoc
+}
+demo_first_gen <- dplyr::bind_rows(df_list)
+
+# Home Region
+df_list <- list()
+for (degree in dual_degrees) {
+  dt <- df_clean %>% dplyr::filter(degrees %in% c("MD", degree)) %>% dplyr::filter(!is.na(Home.Region))
+  dt <- table(dt$Home.Region, dt$degrees) %>% as.data.frame.matrix()
+  dt <- dt[ , c(2, 1)]
+  fisher.test(dt, simulate.p.value = T)
+  fisher.posthoc <- row_wise_fisher_test(dt, p.adjust.method = "fdr", detailed = T)
+  fisher.posthoc$degree <- degree
+  fisher.posthoc$predictor <- "Home Region"
+  df_list[[degree]] <- fisher.posthoc
+}
+demo_home_region <- dplyr::bind_rows(df_list)
+
+# Public School
+df_list <- list()
+for (degree in dual_degrees) {
+  dt <- df_clean %>% dplyr::filter(degrees %in% c("MD", degree)) %>% dplyr::filter(!is.na(Public_School))
+  dt <- table(dt$Public_School, dt$degrees) %>% as.data.frame.matrix()
+  dt2 <- dt[ , c(2, 1)]
+  print(degree)
+  print(fisher.test(dt, simulate.p.value = T))
+  fisher.posthoc <- row_wise_fisher_test(dt2, p.adjust.method = "fdr", detailed = T)
+  fisher.posthoc$degree <- degree
+  fisher.posthoc$predictor <- "Public School"
+  df_list[[degree]] <- fisher.posthoc
+}
+demo_public_school <- dplyr::bind_rows(df_list)
+
+# Ivy
+df_list <- list()
+for (degree in dual_degrees) {
+  dt <- df_clean %>% dplyr::filter(degrees %in% c("MD", degree)) %>% dplyr::filter(!is.na(IvyP))
+  dt <- table(dt$IvyP, dt$degrees) %>% as.data.frame.matrix()
+  dt2 <- dt[ , c(2, 1)]
+  print(degree)
+  print(fisher.test(dt, simulate.p.value = T))
+  fisher.posthoc <- row_wise_fisher_test(dt2, p.adjust.method = "fdr", detailed = T)
+  fisher.posthoc$degree <- degree
+  fisher.posthoc$predictor <- "Ivy"
+  df_list[[degree]] <- fisher.posthoc
+}
+demo_ivy <- dplyr::bind_rows(df_list)
+
+
+# Merging all demographic fisher tests into a single dataframe
+demo_df_fish <- dplyr::bind_rows(list(demo_age, demo_sex, demo_urm, demo_food_housing, demo_first_gen, demo_home_region, demo_public_school, demo_ivy))
+
+# Exporting to excel
+#write_xlsx(x = demo_df_fish, path = "tables/demographics_fisher.xlsx")
+```
+
+
+
+
+# 4. Activities and Test Scores
+
+## 4.1 STEP Scores
+
+```{r}
+# STEP1 Scores
+step1_scores <- c("190-194", "195-199", "200-204", "205-209", "210-214", "215-219", "220-224", "225-229", "230-234", "235-239", "240-244", "245-249", "250-254", "255-259", "260-264", "265-269", "270 or higher")
+step1_centered <- c(192, 197, 202, 207, 212, 217, 222, 227, 232, 237, 242, 247, 252, 257, 262, 267, 271)
+df_clean$Step.1_chr <- as.character(df_clean$Step.1)
+df_clean$step1_centered <- plyr::mapvalues(x = df_clean$Step.1_chr, from = step1_scores, to = step1_centered) %>% as.integer()
+
+# STEP2 Scores
+step2_scores <- c("200-204", "205-209", "210-214", "215-219", "220-224", "225-229", "230-234", "235-239", "240-244", "245-249", "250-254", "255-259", "260-264", "265-269", "270 or higher")
+step2_centered <- c(202, 207, 212, 217, 222, 227, 232, 237, 242, 247, 252, 257, 262, 267, 271)
+df_clean$Step.2.CK_chr <- as.character(df_clean$Step.2.CK)
+df_clean$step2_centered <- plyr::mapvalues(x = df_clean$Step.2.CK_chr, from = step2_scores, to = step2_centered) %>% as.integer()
+
+# Calculating STEP2 Scores relative to STEP1
+df_clean$STEP_relative <- df_clean$step2_centered - df_clean$step1_centered
+
+# Tidying for plotting - STEP1
+degree_list <- c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")
+step1_counts <- df_clean %>% 
+  dplyr::filter(degrees %in% degree_list) %>% dplyr::filter(!is.na(step1_centered)) %>% 
+  dplyr::group_by(degrees, step1_centered) %>% 
+  dplyr::summarise(step1_counts = n())
+step1_totals <- df_clean %>% 
+  dplyr::filter(degrees %in% degree_list) %>% dplyr::filter(!is.na(step1_centered)) %>% 
+  dplyr::group_by(degrees) %>% 
+  dplyr::summarise(step1_totals = n())
+step1_counts <- merge(step1_counts, step1_totals, by = "degrees")
+step1_counts$percents <- (step1_counts$step1_counts / step1_counts$step1_totals) * 100
+
+# Tidying for plotting - STEP2
+step2_counts <- df_clean %>% 
+  dplyr::filter(degrees %in% degree_list) %>% dplyr::filter(!is.na(step2_centered)) %>% 
+  dplyr::group_by(degrees, step2_centered) %>% 
+  dplyr::summarise(step2_counts = n())
+step2_totals <- df_clean %>% 
+  dplyr::filter(degrees %in% degree_list) %>% dplyr::filter(!is.na(step2_centered)) %>% 
+  dplyr::group_by(degrees) %>% 
+  dplyr::summarise(step2_totals = n())
+step2_counts <- merge(step2_counts, step2_totals, by = "degrees")
+step2_counts$percents <- (step2_counts$step2_counts / step2_counts$step2_totals) * 100
+```
+
+```{r}
+# Plotting for clarity - STEP1
+step1_distribution <- step1_counts %>% ggplot(aes(x = step1_centered, y = percents, color = degrees)) + 
+  geom_point() + 
+  geom_line() + 
+  labs(x = "STEP1 Centered Score", y = "Percent of Total (%)", color = "Degrees", title = "STEP1 Score Distribution") +
+  theme_classic() + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Plotting for clarity - STEP2
+step2_distribution <- step2_counts %>% ggplot(aes(x = step2_centered, y = percents, color = degrees)) + 
+  geom_point() + 
+  geom_line() + 
+  labs(x = "STEP2 Centered Score", y = "Percent of Total (%)", color = "Degrees", title = "STEP2 Score Distribution") +
+  theme_classic() + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Patchwork to put graphs together
+step_distribution <- step1_distribution | step2_distribution
+print(step_distribution)
+
+# STEP2 relative to STEP1 score difference
+step_delta_plot <- df_clean %>% dplyr::filter(degrees %in% degree_list) %>% 
+  ggplot(aes(x = degrees, y = STEP_relative, fill = degrees)) +
+  geom_boxplot(outlier.shape = NA) + 
+  labs(x = "Degrees", y = "STEP2 Score Delta (STEP2 - STEP1)", fill = "Degrees", title = "STEP2 - STEP1 Score Deltas") + 
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5))
+print(step_delta_plot)
+
+# exporting figures
+#ggsave(plot = step_distribution, filename = "figures/step_scores_plot.pdf", width = 4000, height = 1500, dpi = 300, units = "px")
+#ggsave(plot = step_delta_plot, filename = "figures/step_delta_plot.pdf", width = 1800, height = 1400, dpi = 300, units = "px")
+```
+
+```{r}
+# Statistical Tests for STEP1
+step1_counts <- df_clean %>% 
+  dplyr::filter(degrees %in% degree_list) %>% dplyr::filter(!is.na(step1_centered))
+kruskal_res <- kruskal.test(step1_centered ~ degrees, data = step1_counts)  #kruskal test for non-normal median comparisons
+pairwise_kruskal <- pairwise.wilcox.test(step1_counts$step1_centered, step1_counts$degrees, p.adjust.method = "fdr")
+print(kruskal_res)
+print(pairwise_kruskal)
+
+anova_res <- aov(step1_centered ~ degrees, data = step1_counts)  #ANOVA for normal mean comparisons
+pairwise_anova_step1 <- TukeyHSD(anova_res)
+pairwise_anova_step1 <- as.data.frame(pairwise_anova_step1$degrees) %>% tibble::rownames_to_column(var = "comp")
+pairwise_anova_step1$exam <- "STEP1"
+summary(anova_res)
+
+# Statistical Tests for STEP2
+step2_counts <- df_clean %>% 
+  dplyr::filter(degrees %in% degree_list) %>% dplyr::filter(!is.na(step2_centered))
+kruskal_res <- kruskal.test(step2_centered ~ degrees, data = step2_counts)  #kruskal test for non-normal median comparisons
+pairwise_kruskal <- pairwise.wilcox.test(step2_counts$step2_centered, step2_counts$degrees, p.adjust.method = "fdr")
+print(kruskal_res)
+print(pairwise_kruskal)
+
+anova_res <- aov(step2_centered ~ degrees, data = step2_counts)  #ANOVA for normal mean comparisons
+pairwise_anova_step2 <- TukeyHSD(anova_res)
+pairwise_anova_step2 <- as.data.frame(pairwise_anova_step2$degrees) %>% tibble::rownames_to_column(var = "comp")
+pairwise_anova_step2$exam <- "STEP2"
+summary(anova_res)
+
+
+# Statistical Tests for STEP Delta
+step_delta <- df_clean %>% 
+  dplyr::filter(degrees %in% degree_list) %>% dplyr::filter(!is.na(STEP_relative))
+step_delta_summary <- step_delta %>% dplyr::group_by(degrees) %>% 
+  dplyr::summarise(
+    mean_step_diff = mean(STEP_relative),
+    sd_step_diff = sd(STEP_relative)
+  )
+kruskal_res <- kruskal.test(STEP_relative ~ degrees, data = step_delta)  #kruskal test for non-normal median comparisons
+pairwise_kruskal <- pairwise.wilcox.test(step_delta$STEP_relative, step_delta$degrees, p.adjust.method = "fdr")
+print(kruskal_res)
+print(pairwise_kruskal)
+
+anova_res <- aov(STEP_relative ~ degrees, data = step_delta)  #ANOVA for normal mean comparisons
+pairwise_anova_delta <- TukeyHSD(anova_res)
+pairwise_anova_delta <- as.data.frame(pairwise_anova_delta$degrees) %>% tibble::rownames_to_column(var = "comp")
+pairwise_anova_delta$exam <- "STEP Delta"
+summary(anova_res)
+
+
+# Statistical Tests for time of STEP2 CK release
+df_list <- list()
+dual_degrees <- c("MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")
+for (degree in dual_degrees) {
+  dt <- df_clean %>% 
+    dplyr::filter(degrees %in% c("MD", degree)) %>% 
+    dplyr::filter(!is.na(Step.2.CK.release))
+  dt <- table(dt$Step.2.CK.release, dt$degrees) %>% as.data.frame.matrix()
+  dt2 <- dt[ , c(2, 1)]
+  print(degree)
+  print(fisher.test(dt, simulate.p.value = T))
+  fisher.posthoc <- row_wise_fisher_test(dt2, p.adjust.method = "fdr", detailed = T)
+  fisher.posthoc$degree <- degree
+  fisher.posthoc$predictor <- "STEP2 Release"
+  df_list[[degree]] <- fisher.posthoc
+}
+
+# Merging and exporting to excel
+step_stats <- dplyr::bind_rows(list(pairwise_anova_step1, pairwise_anova_step2, pairwise_anova_delta))
+demo_step2_release <- dplyr::bind_rows(df_list)
+
+# Exporting STEP stats tables
+#write_xlsx(x = step_stats, path = "tables/STEP_anova_stats.xlsx")
+#write_xlsx(x = demo_step2_release, path = "tables/STEP2_release_stats.xlsx")
+```
+
+```{r}
+# Table for STEP1 - median or mean?
+step1_table <- step1_counts %>% summary_factorlist(
+  dependent = "degrees", explanatory = c("step1_centered"), cont = "mean", p = T, 
+  add_col_totals = TRUE, include_col_totals_percent = TRUE
+)
+
+# Table for STEP2
+step2_table <- step2_counts %>% summary_factorlist(
+  dependent = "degrees", explanatory = c("step2_centered"), cont = "mean", p = T, 
+  add_col_totals = TRUE, include_col_totals_percent = TRUE
+)
+
+# Table for Delta STEP (STEP2 - STEP1)
+step_diff_table <- df_clean %>% dplyr::filter(degrees %in% degree_list) %>% 
+  summary_factorlist(
+    dependent = "degrees", explanatory = c("STEP_relative"), cont = "mean", p = T, 
+  add_col_totals = TRUE, include_col_totals_percent = TRUE
+)
+
+# Table for STEP2 CK Release data
+step2_release_table <- df_clean %>% dplyr::filter(degrees %in% degree_list) %>% 
+  summary_factorlist(
+    dependent = "degrees", explanatory = c("Step.2.CK.release"), p_cat = "chisq", p = T, 
+    add_col_totals = TRUE, include_col_totals_percent = TRUE
+  )
+
+# Merging into a STEP table to export
+step_table <- dplyr::bind_rows(step1_table, step2_table, step_diff_table, step2_release_table)
+
+# Exporting as excel
+#write_xlsx(x = step_table, path = "tables/STEP_metrics_table_mean.xlsx")
+```
+
+
+
+## 4.2 Class Quartiles
+
+```{r}
+# Function to calculate stats and pairwise comparisons for class quartiles
+quartile_calculator <- function(comparison, dual_degree) {
+  quartile_df <- df_clean %>% 
+    dplyr::filter(degrees %in% c("MD", dual_degree)) %>% 
+    dplyr::filter(!is.na(comparison))
+  quartile_df <- table(quartile_df$degrees, quartile_df[[comparison]]) %>% as.data.frame.matrix() %>% t()
+  quartile_df <- quartile_df[ , c(2, 1)]
+  print(quartile_df)
+  
+  chi_res <- chisq.test(quartile_df)
+  print(chi_res)
+  chi_posthoc <- chisq.posthoc.test(quartile_df, method = "fdr")
+  fisher.posthoc <- row_wise_fisher_test(quartile_df, p.adjust.method = "fdr", detailed = T)
+  fisher.posthoc$degrees <- dual_degree
+  return(fisher.posthoc)
+}
+```
+
+```{r}
+# Cumulative quartile
+quartile_mdphd <- quartile_calculator(comparison = "Cumulative.Quartile", dual_degree = "MD-PhD")
+quartile_mdmph <- quartile_calculator(comparison = "Cumulative.Quartile", dual_degree = "MD-MPH")
+quartile_mdmba <- quartile_calculator(comparison = "Cumulative.Quartile", dual_degree = "MD-MBA")
+quartile_mdmsc <- quartile_calculator(comparison = "Cumulative.Quartile", dual_degree = "MD-MSc")
+cumulative_quartile <- dplyr::bind_rows(list(quartile_mdphd, quartile_mdmph, quartile_mdmba, quartile_mdmsc))
+cumulative_quartile$quartile_metric <- "Cumulative Quartile"
+
+# Quartile Rank
+rankq_mdphd <- quartile_calculator(comparison = "Quartile.Rank", dual_degree = "MD-PhD")
+rankq_mdmph <- quartile_calculator(comparison = "Quartile.Rank", dual_degree = "MD-MPH")
+rankq_mdmba <- quartile_calculator(comparison = "Quartile.Rank", dual_degree = "MD-MBA")
+rankq_mdmsc <- quartile_calculator(comparison = "Quartile.Rank", dual_degree = "MD-MSc")
+rank_quartile <- dplyr::bind_rows(list(rankq_mdphd, rankq_mdmph, rankq_mdmba, rankq_mdmsc))
+rank_quartile$quartile_metric <- "Quartile Rank"
+
+# Merging
+quartile_df <- dplyr::bind_rows(list(cumulative_quartile, rank_quartile))
+
+# Exporting to excel
+#write_xlsx(x = quartile_df, path = "tables/quartiles.xlsx")
+```
+
+
+
+## 4.3 Honors and Experiences
+
+```{r}
+honors_function <- function(comparison, plot_title) {
+  # Cleaning the data for plotting
+  degree_list <- c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")
+  honors_df <- df_clean %>% 
+    dplyr::filter(degrees %in% degree_list) %>%
+    dplyr::filter(!is.na(comparison))
+  
+  # Plotting
+  p <- honors_df %>% dplyr::filter(degrees %in% degree_list) %>% 
+    ggplot(aes(x = honors_df[[comparison]], fill = degrees)) + 
+    geom_histogram(center = 0, binwidth = 1, color = "black") +
+    facet_wrap(~degrees, ncol = 5, scales = "free_y") + 
+    scale_y_continuous(expand = c(0, 0)) +
+    labs(x = plot_title, y = "Counts", title = plot_title) +
+    theme_classic() +
+    theme(strip.background = element_blank(),
+          plot.title = element_text(hjust = 0.5))
+  print(p)
+  
+  # Statistical testing with non-parametric kruskal and post hoc 
+  kruskal_res <- kruskal.test(honors_df[[comparison]], honors_df$degrees)
+  pairwise_kruskal <- pairwise.wilcox.test(honors_df[[comparison]], honors_df$degrees, p.adjust.method = "fdr")
+  print(kruskal_res)
+  print(pairwise_kruskal)
+  ret_list <- list("plot" = p, "stats" = pairwise_kruskal)
+  return(ret_list)
+}
+```
+
+```{r}
+# Plotting and Stats for Number of Research Experiences
+research_experiences <- honors_function(comparison = "X..Research.Experiences", plot_title = "Number of Reseach Experiences")
+
+# Plotting and Stats for Number of Abstracts, Presentations, and Posters
+abstracts_posters <- honors_function(comparison = "X..Abstracts..Pres..Posters", plot_title = "Number of Abstracts/Presentations/Posters")
+
+# Plotting and Stats for Number of Peer reviewed publications
+publications <- honors_function(comparison = "X..Peer.Rev.Publications", plot_title = "Number of Publications")
+
+# Plotting and Stats for Number of Volunteer Experiences
+volunteering <- honors_function(comparison = "X..Volunteer.Experiences", plot_title = "Number of Volunteering Experiences")
+
+# Plotting and Stats for Number of Leadership experiences
+leadership <- honors_function(comparison = "X..Leadership.Positions", plot_title = "Number of Leadership Positions")
+
+# Plotting and Stats for Number of Honored Clerkships
+honors_clerkships <- honors_function(comparison = "X..Honored.Clerkships", plot_title = "Number of Honors in Clerkships")
+```
+
+```{r}
+# Exporting activities plots 
+#ggsave(plot = honors_clerkships$plot, filename = "figures/honors_clerkships.png", width = 4000, height = 1300, dpi = 300, units = "px")
+#ggsave(plot = research_experiences$plot, filename = "figures/research_experiences.png", width = 4000, height = 1300, dpi = 300, units = "px")
+#ggsave(plot = abstracts_posters$plot, filename = "figures/abstracts_posters.png", width = 4000, height = 1300, dpi = 300, units = "px")
+#ggsave(plot = publications$plot, filename = "figures/publications_plot.png", width = 4000, height = 1300, dpi = 300, units = "px")
+#ggsave(plot = volunteering$plot, filename = "figures/volunteering_plot.png", width = 4000, height = 1300, dpi = 300, units = "px")
+#ggsave(plot = leadership$plot, filename = "figures/leadership_plot.png", width = 4000, height = 1300, dpi = 300, units = "px")
+
+# Combining activity plots
+combined_activities_plot <- research_experiences$plot / abstracts_posters$plot / publications$plot / volunteering$plot / leadership$plot / honors_clerkships$plot & plot_annotation(tag_levels = 'A')
+#ggsave(plot = combined_activities_plot, filename = "figures/combined_activities_plot.pdf", width = 4000, height = 5500, dpi = 300, units = "px")
+```
+
+```{r}
+# Function to extract stats and format the results of the pairwise wilcox test to a dataframe
+stat_extracter <- function(activity_list, activity) {
+  df_stats <- activity_list$stats$p.value %>% as.data.frame()
+  df_stats <- df_stats %>% tibble::rownames_to_column(var = "degree")
+  df_stats$activity <- activity
+  return(df_stats)
+}
+
+# Exporting Stats
+research_experiences_stats <- stat_extracter(activity_list = research_experiences, activity = "number of research experiences")
+abstracts_posters_stats <- stat_extracter(activity_list = abstracts_posters, activity = "number of abstracts, presentations, and posters")
+publications_stats <- stat_extracter(activity_list = publications, activity = "number of publications")
+volunteering_stats <- stat_extracter(activity_list = volunteering, activity = "number of volunteering experiences")
+leadership_stats <- stat_extracter(activity_list = leadership, activity = "number of leadership experiences")
+honors_clerkships_stats <- stat_extracter(activity_list = honors_clerkships, activity = "number of honors clerkships")
+
+# Merging and exporting to excel
+activity_df <- dplyr::bind_rows(list(research_experiences_stats, abstracts_posters_stats, publications_stats, volunteering_stats, leadership_stats, honors_clerkships_stats))
+#write_xlsx(x = activity_df, path = "tables/activities_stats.xlsx")
+
+# FinalFit Table to excel - median or mean?
+activities <- c("X..Research.Experiences", "X..Abstracts..Pres..Posters", "X..Peer.Rev.Publications", "X..Volunteer.Experiences", "X..Leadership.Positions", "X..Honored.Clerkships")
+degree_list <- c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")
+activity_list <- list()
+for (act in activities) {
+  activities_table <- df_clean %>% dplyr::filter(degrees %in% degree_list) %>% 
+    summary_factorlist(
+      dependent = "degrees", explanatory = c(act), cont = "mean", p = T,
+      add_col_totals = TRUE, include_col_totals_percent = TRUE
+  )
+  activities_table$activity <- act
+  activity_list[[act]] <- activities_table
+}
+
+# Merging and Exporting to excel
+activity_table_df <- dplyr::bind_rows(activity_list)
+#write_xlsx(x = activity_table_df, path = "tables/activities_finalfit_mean.xlsx")
+```
+
+```{r}
+# Honors in specialty of choice and couples match (yes/no)
+honors_spec <- df_clean %>% dplyr::filter(degrees %in% degree_list) %>% 
+  summary_factorlist(
+    dependent = "degrees", explanatory = c("Honors.A.This.Specialty", "Couples.Match"), 
+    p_cat = "chisq", p = T, 
+    add_col_totals = TRUE, include_col_totals_percent = TRUE
+  )
+
+# Stats - honors in specialty of choice
+honors_list <- list()
+dt <- df_clean %>% dplyr::filter(degrees %in% degree_list)
+dt <- table(dt$degrees, dt$Honors.A.This.Specialty) %>% as.data.frame.matrix()
+print(fisher.test(dt, simulate.p.value = T))
+pairwise_fish <- pairwise_fisher_test(dt, p.adjust.method = "fdr", detailed = T)
+pairwise_fish$activity <- "honors in specialty"
+honors_list[["specialty_honors"]] = pairwise_fish
+
+# Stats - couples match
+dt <- df_clean %>% dplyr::filter(degrees %in% degree_list)
+dt <- table(dt$degrees, dt$Couples.Match) %>% as.data.frame.matrix()
+print(fisher.test(dt, simulate.p.value = T))
+pairwise_fish <- pairwise_fisher_test(dt, p.adjust.method = "fdr", detailed = T)
+pairwise_fish$activity <- "couples match"
+honors_list[["couples_match"]] = pairwise_fish
+honors_df <- dplyr::bind_rows(honors_list)
+
+# Exporting dataframes to excel
+#write_xlsx(x = honors_spec, path = "tables/specialty_honors_couples_match.xlsx")
+#write_xlsx(x = honors_df, path = "tables/specialty_honors_couples_match_pairwise.xlsx")
+```
+
+
+
+## 4.4 Gap Years
+
+```{r}
+# Research Years by degree path
+degree_list <- c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")
+gap_years <- df_clean[df_clean == ""] <- NA
+gap_years <- df_clean %>% 
+  dplyr::filter(degrees %in% degree_list) %>% 
+  dplyr::filter(!is.na(Research.Year))
+gap_years <- table(gap_years$degrees, gap_years$Research.Year) %>% as.data.frame.matrix()
+
+# Posthoc analysis
+fisher.posthoc.research <- pairwise_fisher_test(gap_years, p.adjust.method = "fdr", detailed = T)
+fisher.posthoc.research$gap_year <- "research year"
+
+# Year of absence by degree path
+degree_list <- c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")
+gap_years <- df_clean[df_clean == ""] <- NA
+gap_years <- df_clean %>% 
+  dplyr::filter(degrees %in% degree_list) %>% 
+  dplyr::filter(!is.na(Absence.Year))
+gap_years <- table(gap_years$degrees, gap_years$Absence.Year) %>% as.data.frame.matrix()
+
+# Posthoc analysis
+fisher.posthoc.absence <- pairwise_fisher_test(gap_years, p.adjust.method = "fdr", detailed = T)
+fisher.posthoc.absence$gap_year <- "year of absence"
+
+# Merging
+fisher.posthoc <- dplyr::bind_rows(fisher.posthoc.research, fisher.posthoc.absence)
+fisher.posthoc$gap_year <- factor(fisher.posthoc$gap_year, levels = c("research year", "year of absence"))
+
+# Finalfit table
+gap_year_degree <- df_clean %>% dplyr::filter(degrees %in% degree_list) %>% 
+  summary_factorlist(
+    dependent = "degrees", explanatory = c("Research.Year", "Absence.Year"), 
+    p_cat = "chisq", p = T, 
+    add_col_totals = TRUE, include_col_totals_percent = TRUE
+  )
+
+# exports to excel
+#write_xlsx(x = fisher.posthoc, path = "tables/gap_year_degree_stats.xlsx")
+#write_xlsx(x = gap_year_degree, path = "tables/gap_year_degree.xlsx")
+```
+
+```{r}
+# Research Years by specialty - plot this on a forest plot! 
+degree_list <- c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")
+gap_years <- df_clean[df_clean == ""] <- NA
+gap_years <- df_clean %>% 
+  dplyr::filter(degrees %in% degree_list) %>% 
+  dplyr::filter(!is.na(Research.Year))
+gap_years <- table(gap_years$Specialty, gap_years$Research.Year) %>% as.data.frame.matrix()
+gap_years <- gap_years[gap_years$No >= 5 & gap_years$Yes >= 5, ]
+gap_years <- gap_years[ , c(2, 1)]
+
+# Posthoc analysis
+fisher.posthoc.research <- row_wise_fisher_test(gap_years, p.adjust.method = "fdr", detailed = T)
+fisher.posthoc.research <- fisher.posthoc.research %>% dplyr::mutate(
+  likelihood = dplyr::case_when(
+    conf.low > 1 & p.adj < 0.05 ~ "Higher",
+    conf.high < 1 & p.adj < 0.05 ~ "Lower",
+    p.adj > 0.05 ~ "No Change"
+  )
+)
+fisher.posthoc.research$likelihood <- factor(x = fisher.posthoc.research$likelihood, levels = c("Higher", "No Change", "Lower"))
+fisher.posthoc.research$gap_year <- "research year"
+
+
+# Absence Years by specialty - plot this on a forest plot!
+gap_years <- df_clean[df_clean == ""] <- NA
+gap_years <- df_clean %>% 
+  dplyr::filter(degrees %in% degree_list) %>% 
+  dplyr::filter(!is.na(Absence.Year))
+gap_years <- table(gap_years$Specialty, gap_years$Absence.Year) %>% as.data.frame.matrix()
+gap_years <- gap_years[gap_years$No >= 5 & gap_years$Yes >= 5, ]
+gap_years <- gap_years[ , c(2, 1)]
+
+# Posthoc analysis
+fisher.posthoc.absence <- row_wise_fisher_test(gap_years, p.adjust.method = "fdr", detailed = T)
+fisher.posthoc.absence <- fisher.posthoc.absence %>% dplyr::mutate(
+  likelihood = dplyr::case_when(
+    conf.low > 1 & p.adj < 0.05 ~ "Higher",
+    conf.high < 1 & p.adj < 0.05 ~ "Lower",
+    p.adj > 0.05 ~ "No Change"
+  )
+)
+fisher.posthoc.absence$likelihood <- factor(x = fisher.posthoc.absence$likelihood, levels = c("Higher", "No Change", "Lower"))
+fisher.posthoc.absence$gap_year <- "year of absence"
+
+# Merging for forest plot
+fisher.posthoc <- dplyr::bind_rows(fisher.posthoc.research, fisher.posthoc.absence)
+fisher.posthoc$gap_year <- factor(fisher.posthoc$gap_year, levels = c("research year", "year of absence"))
+
+# Finalfit table
+gap_year_specialty <- df_clean %>% dplyr::filter(degrees %in% degree_list) %>% 
+  summary_factorlist(
+    dependent = "Specialty", explanatory = c("Research.Year", "Absence.Year"), 
+    p_cat = "chisq", p = F, 
+    add_col_totals = TRUE, include_col_totals_percent = TRUE
+  )
+
+# exports to excel
+#write_xlsx(x = fisher.posthoc, path = "tables/gap_year_specialty_stats.xlsx")
+#write_xlsx(x = gap_year_specialty, path = "tables/gap_year_specialty.xlsx")
+```
+
+```{r}
+# Making a forest plot 
+forest_plot <- fisher.posthoc %>% 
+  ggplot(aes(x = estimate, xmin = conf.low, xmax = conf.high, y = reorder(group, estimate), color = likelihood)) + 
+  geom_point() + 
+  geom_errorbarh(height = 0.2) + 
+  geom_text(aes(label = p.adj, x = 8), hjust = 0, size = 3) + 
+  geom_vline(aes(xintercept = 1), color = "black", linetype = "dashed") + 
+  facet_wrap(~gap_year, ncol = 2) + 
+  scale_x_continuous(n.breaks = 10, limits = c(0, 10)) +  #2.8
+  scale_color_manual(values = c("#eb2323", "#525252", "#2e66ff")) +
+  labs(x = "Odds Ratio [95% CI]", y = "Specialty", title = "Odds of Taking a Research Year per Specialty", color = "Odds") + 
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14),
+        strip.background = element_blank(),
+        strip.text = element_text(size = 12))
+print(forest_plot)
+
+# Saving the plot
+#ggsave(plot = forest_plot, filename = "figures/gap_years.png", width = 3500, height = 2500, dpi = 300, units = "px")
+```
+
+
+
+
+
+## 4.5 Honors Societies
+
+```{r}
+# aoa status
+dual_degrees <- c("MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")
+aoa_list <- list()
+for (degree_path in dual_degrees) {
+  aoa <- df_clean %>% dplyr::filter(degrees %in% c("MD", degree_path))
+  aoa <- table(aoa$AOA.Sigma, aoa$degrees) %>% as.data.frame.matrix()
+  aoa <- aoa[ , c(2, 1)]
+  pairwise.fisher <- row_wise_fisher_test(aoa, p.adjust.method = "fdr", detailed = T)
+  pairwise.fisher$honors_society <- "AOA"
+  pairwise.fisher$dual_degree <- degree_path
+  aoa_list[[degree_path]] <- pairwise.fisher
+}
+aoa_df <- dplyr::bind_rows(aoa_list)
+
+# gold humanism status
+dual_degrees <- c("MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")
+ghhs_list <- list()
+for (degree_path in dual_degrees) {
+  ghhs <- df_clean %>% dplyr::filter(degrees %in% c("MD", degree_path))
+  ghhs <- table(ghhs$GHHS, ghhs$degrees) %>% as.data.frame.matrix()
+  ghhs <- ghhs[ , c(2, 1)]
+  pairwise.fisher <- row_wise_fisher_test(ghhs, p.adjust.method = "fdr", detailed = T)
+  pairwise.fisher$honors_society <- "Gold Humanism"
+  pairwise.fisher$dual_degree <- degree_path
+  ghhs_list[[degree_path]] <- pairwise.fisher
+}
+ghhs_df <- dplyr::bind_rows(ghhs_list)
+
+# Merging
+honors_df <- dplyr::bind_rows(list(aoa_df, ghhs_df))
+
+# Finalfit table
+honors_ff <- df_clean %>% 
+  dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")) %>% 
+  summary_factorlist(
+    dependent = "degrees", explanatory = c("AOA.Sigma", "GHHS"), 
+    p = T, p_cat = "chisq",
+    add_col_totals = TRUE, include_col_totals_percent = TRUE
+  )
+
+# Exporting to excel 
+#write_xlsx(x = honors_df, path = "tables/honors_societies_stats.xlsx")
+#write_xlsx(x = honors_ff, path = "tables/honors_societies_table.xlsx")
+```
+
+
+
+# 5. Interview Outcomes
+
+## 5.1 Interviews (unadjusted)
+
+```{r}
+# Interview info
+cols_to_keep <- c("Applied_Total", "InterviewOffer_Total", "Majority.of.Interview.Offers", "Majority.of.Interviews.Attended", "X..Interviews.Attended", "Matched", "degrees")
+overall_interview_df <- df_clean[, cols_to_keep] %>% dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
+
+# Calculating percent interview offer over total applications
+overall_interview_df$interview_percent <- (overall_interview_df$InterviewOffer_Total / overall_interview_df$Applied_Total) * 100
+overall_interview_df$degrees <- factor(x = overall_interview_df$degrees, levels = c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
+interview_success <- overall_interview_df %>% dplyr::group_by(degrees) %>%
+  dplyr::summarise(
+    median_interview_percent = median(interview_percent),
+    q5 = quantile(interview_percent, 0.05),
+    q25 = quantile(interview_percent, 0.25),
+    q75 = quantile(interview_percent, 0.75),
+    q95 = quantile(interview_percent, 0.95)
+  )
+
+# Numerical Variables for interviews
+interview_int_df <- tidyr::pivot_longer(data = overall_interview_df[, c(1, 2, 5, 7)], cols = c("Applied_Total", "InterviewOffer_Total", "X..Interviews.Attended"), names_to = "interview_metric", values_to = "values")
+interview_int_df$interview_metric <- plyr::mapvalues(x = interview_int_df$interview_metric, from = c("Applied_Total", "InterviewOffer_Total", "X..Interviews.Attended"), to = c("Applications", "Interview Offers", "Interviews Attended"))
+interview_int_df$degrees <- factor(x = interview_int_df$degrees, levels = c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
+
+# Testing for normality and equal variances - THIS IS NON-NORMAL Data! 
+#ggqqplot(overall_interview_df$X..Interviews.Attended)
+#shapiro.test(overall_interview_df$Applied_Total)
+#leveneTest(X..Interviews.Attended ~ degrees, overall_interview_df)
+
+# Kruskal-Wallis test and post hoc analysis: Total Applications
+kruskal_res <- kruskal.test(Applied_Total ~ degrees, data = overall_interview_df)
+pairwise_kruskal <- pairwise.wilcox.test(overall_interview_df$Applied_Total, overall_interview_df$degrees, p.adjust.method = "fdr")
+print(kruskal_res)
+print(pairwise_kruskal)
+
+# Kruskal-Wallis test and post hoc analysis: Interview offers
+kruskal_res <- kruskal.test(InterviewOffer_Total ~ degrees, data = overall_interview_df)
+pairwise_kruskal <- pairwise.wilcox.test(overall_interview_df$InterviewOffer_Total, overall_interview_df$degrees, p.adjust.method = "fdr")
+print(kruskal_res)
+print(pairwise_kruskal)
+
+# Kruskal-Wallis test and post hoc analysis: Interviews attended
+kruskal_res <- kruskal.test(X..Interviews.Attended ~ degrees, data = overall_interview_df)
+pairwise_kruskal <- pairwise.wilcox.test(overall_interview_df$X..Interviews.Attended, overall_interview_df$degrees, p.adjust.method = "fdr")
+print(kruskal_res)
+print(pairwise_kruskal)
+
+# Kruskal-Wallis test and post hoc analysis: Percent Interview Offer Success
+kruskal_res <- kruskal.test(interview_percent ~ degrees, data = overall_interview_df)
+pairwise_kruskal <- pairwise.wilcox.test(overall_interview_df$interview_percent, overall_interview_df$degrees, p.adjust.method = "fdr")
+print(kruskal_res)
+print(pairwise_kruskal)
+```
+
+```{r}
+# Table to export
+interview_table <- overall_interview_df %>% summary_factorlist(
+  dependent = "degrees", explanatory = c("Applied_Total", "InterviewOffer_Total", "Majority.of.Interview.Offers", "Majority.of.Interviews.Attended", "X..Interviews.Attended", "Matched"),
+  cont = "median", p = TRUE, add_col_totals = TRUE
+)
+
+# Posthoc stats for dates of interview offers / attended and match rates
+dual_degrees <- c("MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")
+int_offers_list <- list()
+for (degree_path in dual_degrees) {
+  dt <- df_clean %>% dplyr::filter(degrees %in% c("MD", degree_path))
+  dt <- table(dt$Majority.of.Interview.Offers, dt$degrees) %>% as.data.frame.matrix()
+  dt <- dt[ , c(2, 1)]
+  pairwise.fisher <- row_wise_fisher_test(dt, p.adjust.method = "fdr", detailed = T)
+  pairwise.fisher$dual_degree <- degree_path
+  pairwise.fisher$metric <- "Majority of Interview Offers"
+  int_offers_list[[degree_path]] <- pairwise.fisher
+}
+int_offers_df <- dplyr::bind_rows(int_offers_list)
+
+int_attend_list <- list()
+for (degree_path in dual_degrees) {
+  dt <- df_clean %>% dplyr::filter(degrees %in% c("MD", degree_path))
+  dt <- table(dt$Majority.of.Interviews.Attended, dt$degrees) %>% as.data.frame.matrix()
+  dt <- dt[ , c(2, 1)]
+  pairwise.fisher <- row_wise_fisher_test(dt, p.adjust.method = "fdr", detailed = T)
+  pairwise.fisher$dual_degree <- degree_path
+  pairwise.fisher$metric <- "Majority of Interviews Attended"
+  int_attend_list[[degree_path]] <- pairwise.fisher
+}
+int_attend_df <- dplyr::bind_rows(int_attend_list)
+
+matched_list <- list()
+for (degree_path in dual_degrees) {
+  dt <- df_clean %>% dplyr::filter(degrees %in% c("MD", degree_path))
+  dt <- table(dt$Matched, dt$degrees) %>% as.data.frame.matrix()
+  dt <- dt[ , c(2, 1)]
+  pairwise.fisher <- row_wise_fisher_test(dt, p.adjust.method = "fdr", detailed = T)
+  pairwise.fisher$dual_degree <- degree_path
+  pairwise.fisher$metric <- "Matched"
+  matched_list[[degree_path]] <- pairwise.fisher
+}
+matched_df <- dplyr::bind_rows(matched_list)
+
+
+# Merging and exporting to excel
+int_match_df <- dplyr::bind_rows(list(int_offers_df, int_attend_df, matched_df))
+#write_xlsx(x = interview_table, path = "tables/interview_table_median.xlsx")
+#write_xlsx(x = int_match_df, path = "tables/interview_table_stats.xlsx")
+```
+
+```{r}
+# Plotting applications
+applications_plot <- interview_int_df %>% dplyr::filter(interview_metric == "Applications") %>% 
+  ggplot(aes(x = degrees, y = values, fill = degrees)) + 
+  geom_boxplot(outliers = F) + 
+  scale_fill_brewer(palette = "Set3") + 
+  labs(x = "", y = "Number of Applications", fill = "Degrees", title = "Number of Applications") + 
+  theme_classic() + 
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none")
+print(applications_plot)
+
+
+# Number of interview offers and interviews attended
+interview_plot <- interview_int_df %>% dplyr::filter(interview_metric %in% c("Interview Offers", "Interviews Attended")) %>% 
+  ggplot(aes(x = degrees, y = values, fill = interview_metric)) + 
+  geom_boxplot(outliers = F) + 
+  #facet_wrap(~interview_metric, ncol = 3, scales = "free_y") +
+  scale_fill_manual(values = c("#6cd4c5", "#e27c7c")) + 
+  labs(x = "", y = "Number of Interviews", fill = "Degrees", title = "Number of Interviews") + 
+  theme_classic() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        strip.background = element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        legend.position = "right")
+print(interview_plot)
+
+
+# Number of interview offers only (excluding interviews attended)
+interview_plot2 <- interview_int_df %>% dplyr::filter(interview_metric %in% c("Interview Offers")) %>% 
+  ggplot(aes(x = degrees, y = values, fill = degrees)) + 
+  geom_boxplot(outliers = F) + 
+  scale_fill_brewer(palette = "Set3") + 
+  labs(x = "", y = "Number of Interviews", fill = "Degrees", title = "Number of Interviews") + 
+  theme_classic() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        strip.background = element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        legend.position = "none")
+print(interview_plot2)
+
+
+# Percent interview offers over total applications
+int_success_plot <- overall_interview_df %>% ggplot(aes(x = degrees, y = interview_percent, fill = degrees)) +
+  geom_boxplot(outliers = F) + 
+  scale_fill_brewer(palette = "Set3") + 
+  labs(x = "", y = "Percent Interview Offers (%)", fill = "Degrees", title = "Interview Offer Rate") + 
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        strip.background = element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        legend.position = "none")
+print(int_success_plot)
+
+
+# Match rate
+degree_list <- c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")
+match_rate_df <- df_clean %>% dplyr::filter(degrees %in% degree_list)
+match_rate_df <- table(match_rate_df$degrees, match_rate_df$Matched) %>% as.data.frame.matrix()
+match_rate_df <- match_rate_df %>% tibble::rownames_to_column(var = "degrees")
+match_rate_df$degrees <- factor(x = match_rate_df$degrees, levels = c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
+match_rate_df$percent_match <- (match_rate_df$Yes / (match_rate_df$Yes + match_rate_df$No)) * 100
+match_rate_plot <- match_rate_df %>% 
+  ggplot(aes(x = degrees, y = percent_match, fill = degrees)) + 
+  geom_bar(stat = "identity", color = "black") + 
+  geom_text(aes(label = round(percent_match, 1)), vjust = -0.3, size = 3.5) + 
+  scale_fill_brewer(palette = "Set3") + 
+  scale_y_continuous(limits = c(0, 100), expand = c(0, 0)) +
+  coord_cartesian(ylim = c(70, 100)) + 
+  labs(x = "", y = "Match Rate (%)", fill = "Degrees", title = "Match Rate") + 
+  theme_classic() + 
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none")
+print(match_rate_plot)
+
+
+# Patchwork to merge figures
+combined_plot <- (applications_plot | interview_plot | match_rate_plot) + plot_layout(ncol = 3, widths = c(1, 1.8, 1))
+print(combined_plot)
+
+# Exporting figures
+#ggsave(plot = applications_plot, filename = "figures/applications_plot.pdf", width = 800, height = 1000, dpi = 300, units = "px")
+#ggsave(plot = interview_plot, filename = "figures/interview_plot.pdf", width = 1500, height = 1000, dpi = 300, units = "px")
+#ggsave(plot = interview_plot2, filename = "figures/interview_plot_2.pdf", width = 800, height = 1000, dpi = 300, units = "px")
+#ggsave(plot = int_success_plot, filename = "figures/interview_percent_plot.pdf", width = 800, height = 1000, dpi = 300, units = "px")
+#ggsave(plot = match_rate_plot, filename = "figures/match_rate_plot_2.pdf", width = 800, height = 1000, dpi = 300, units = "px")
+#ggsave(plot = combined_plot, filename = "figures/combined_applications_interviews_match.pdf", width = 4000, height = 1200, dpi = 300, units = "px")
+```
+
+
+
+
+## 5.2 School rankings
+
+```{r}
+# Importing doximity school rankings
+dox <- read_xlsx(path = "tables/doximity_rankings.xlsx")
+dox$program_specialty <- paste0(dox$program, "_", dox$specialty)  #used for merging in the next step
+
+# Selecting columns and splitting by sort by rankings
+dox <- dox[ , c("location", "program_size", "rank", "sort_by", "program_specialty")]
+dox_reputation <- dox %>% dplyr::filter(sort_by == "reputation")
+dox_research <- dox %>% dplyr::filter(sort_by == "research-output")
+```
+
+```{r}
+# Merging programs applied to with selected applicant-level data
+#cols_to_merge <- c("STAR.ID", "Specialty", "degrees")
+#df_merge <- df_clean[, cols_to_merge]
+#programs.dox <- merge(programs, df_merge, by = "STAR.ID", all.x = T)
+#programs.dox$program_specialty <- paste0(programs.dox$Program.Institution, "_", programs.dox$Specialty)
+
+programs.dox <- read.csv(file = "tables/STAR_Programs_2017_2023_final_matched.csv")
+programs.dox$program_specialty <- paste0(programs.dox$Program.Institution.Dox, "_", programs.dox$Specialty)
+
+# Merging doximity rankings by reputation
+programs.dox.reputation <- merge(programs.dox, dox_reputation, by = "program_specialty", all.x = T)
+
+# Merging doximity rankings by research output
+programs.dox.research <- merge(programs.dox, dox_research, by = "program_specialty", all.x = T)
+```
+
+```{r}
+# Summarizing reputation stats - interview offers
+rep.dox.interview <- programs.dox.reputation %>% dplyr::group_by(STAR.ID) %>% 
+  dplyr::filter(Interview.Offer == "Y") %>%  #optional filter for receiving an interview offer
+  dplyr::summarise(
+    specialty = unique(Specialty),
+    degree = unique(degrees),
+    application_count = n(),
+    interviews_yes = sum(Interview.Offer == "Y"),
+    matched = sum(Matched == "Y"), 
+    geographic_connection_yes = sum(Geographic.Connection == "Y"), 
+    geo_preference_eras_yes = sum(Geographic.Preference.ERAS.Supp.App == "Y"),
+    away_rotation_yes = sum(Away.Rotation == "Y"),
+    signaled_program_yes = sum(Signaled.Program == "Y"),
+    program_size_mean = mean(program_size, na.rm = T),
+    reputation_rank_mean = mean(rank, na.rm = T)
+  )
+
+# Summarizing reputation stats - matched
+rep.dox.matched <- programs.dox.reputation %>% dplyr::group_by(STAR.ID) %>% 
+  dplyr::filter(Matched == "Y") %>%  #optional filter for matching
+  dplyr::summarise(
+    specialty = unique(Specialty),
+    degree = unique(degrees),
+    application_count = n(),
+    interviews_yes = sum(Interview.Offer == "Y"),
+    matched = sum(Matched == "Y"), 
+    geographic_connection_yes = sum(Geographic.Connection == "Y"), 
+    geo_preference_eras_yes = sum(Geographic.Preference.ERAS.Supp.App == "Y"),
+    away_rotation_yes = sum(Away.Rotation == "Y"),
+    signaled_program_yes = sum(Signaled.Program == "Y"),
+    program_size_mean = mean(program_size, na.rm = T),
+    reputation_rank_mean = mean(rank, na.rm = T)
+  )
+
+# Summarizing research output stats - interview offers
+research.dox.interview <- programs.dox.research %>% dplyr::group_by(STAR.ID) %>% 
+  dplyr::filter(Interview.Offer == "Y") %>%  #optional filter for receiving an interview offer
+  dplyr::summarise(
+    specialty = unique(Specialty),
+    degree = unique(degrees),
+    application_count = n(),
+    interviews_yes = sum(Interview.Offer == "Y"),
+    matched = sum(Matched == "Y"), 
+    geographic_connection_yes = sum(Geographic.Connection == "Y"), 
+    geo_preference_eras_yes = sum(Geographic.Preference.ERAS.Supp.App == "Y"),
+    away_rotation_yes = sum(Away.Rotation == "Y"),
+    signaled_program_yes = sum(Signaled.Program == "Y"),
+    program_size_mean = mean(program_size, na.rm = T),
+    research_rank_mean = mean(rank, na.rm = T)
+  )
+
+# Summarizing research output stats - matched
+research.dox.matched <- programs.dox.research %>% dplyr::group_by(STAR.ID) %>% 
+  dplyr::filter(Matched == "Y") %>%  #optional filter for matching
+  dplyr::summarise(
+    specialty = unique(Specialty),
+    degree = unique(degrees),
+    application_count = n(),
+    interviews_yes = sum(Interview.Offer == "Y"),
+    matched = sum(Matched == "Y"), 
+    geographic_connection_yes = sum(Geographic.Connection == "Y"), 
+    geo_preference_eras_yes = sum(Geographic.Preference.ERAS.Supp.App == "Y"),
+    away_rotation_yes = sum(Away.Rotation == "Y"),
+    signaled_program_yes = sum(Signaled.Program == "Y"),
+    program_size_mean = mean(program_size, na.rm = T),
+    research_rank_mean = mean(rank, na.rm = T)
+  )
+
+# Counts for non-NA columns
+#non_na_lengths <- apply(research.dox, 2, function(x) length(na.omit(x)))
+#non_na_lengths
+
+# Optional excel export
+#write_xlsx(x = rep.dox.matched, path = "tables/reputation_doximity_ranks.xlsx")
+```
+
+```{r}
+# Stats for program size: interviewed
+degree_list <- c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")
+rep.stats <- rep.dox.interview %>% dplyr::filter(degree %in% degree_list)
+print(kruskal.test(program_size_mean ~ degree, data = rep.stats))
+print(pairwise.wilcox.test(rep.stats$program_size_mean, rep.stats$degree, p.adjust.method = "fdr"))
+
+# Stats for program size: matched
+rep.stats <- rep.dox.matched %>% dplyr::filter(degree %in% degree_list)
+print(kruskal.test(program_size_mean ~ degree, data = rep.stats))
+print(pairwise.wilcox.test(rep.stats$program_size_mean, rep.stats$degree, p.adjust.method = "fdr"))
+
+# Stats for reputation: interviewed
+rep.stats <- rep.dox.interview %>% dplyr::filter(degree %in% degree_list)
+print(kruskal.test(reputation_rank_mean ~ degree, data = rep.stats))
+print(pairwise.wilcox.test(rep.stats$reputation_rank_mean, rep.stats$degree, p.adjust.method = "fdr"))
+
+# Stats for reputation: matched
+rep.stats <- rep.dox.matched %>% dplyr::filter(degree %in% degree_list)
+print(kruskal.test(reputation_rank_mean ~ degree, data = rep.stats))
+print(pairwise.wilcox.test(rep.stats$reputation_rank_mean, rep.stats$degree, p.adjust.method = "fdr"))
+
+# Stats for research output: interviewed
+research.stats <- research.dox.interview %>% dplyr::filter(degree %in% degree_list)
+print(kruskal.test(research_rank_mean ~ degree, data = research.stats))
+print(pairwise.wilcox.test(research.stats$research_rank_mean, research.stats$degree, p.adjust.method = "fdr"))
+
+# Stats for research output: matched
+research.stats <- research.dox.matched %>% dplyr::filter(degree %in% degree_list)
+print(kruskal.test(research_rank_mean ~ degree, data = research.stats))
+print(pairwise.wilcox.test(research.stats$research_rank_mean, research.stats$degree, p.adjust.method = "fdr"))
+
+# Summary statistics for exporting
+program_size_interview_table <- rep.dox.interview %>% dplyr::filter(degree %in% degree_list) %>% 
+  summary_factorlist(dependent = "degree", explanatory = c("program_size_mean", "reputation_rank_mean"), p = T, add_col_totals = T, cont = "mean")
+program_size_interview_table$status <- "Interview Offer"
+program_size_matched_table <- rep.dox.matched %>% dplyr::filter(degree %in% degree_list) %>% 
+  summary_factorlist(dependent = "degree", explanatory = c("program_size_mean", "reputation_rank_mean"), p = T, add_col_totals = T, cont = "mean")
+program_size_matched_table$status <- "Matched"
+program_research_interview_table <- research.dox.interview %>% dplyr::filter(degree %in% degree_list) %>% 
+  summary_factorlist(dependent = "degree", explanatory = c("research_rank_mean"), p = T, add_col_totals = T, cont = "mean")
+program_research_interview_table$status <- "Interview Offer"
+program_research_matched_table <- research.dox.matched %>% dplyr::filter(degree %in% degree_list) %>% 
+  summary_factorlist(dependent = "degree", explanatory = c("research_rank_mean"), p = T, add_col_totals = T, cont = "mean")
+program_research_matched_table$status <- "Matched"
+
+# Exporting
+program_stats_table <- dplyr::bind_rows(list(program_size_interview_table, program_size_matched_table, program_research_interview_table, program_research_matched_table))
+#write_xlsx(x = program_stats_table, path = "tables/residency_ranks_median.xlsx")
+```
+
+```{r}
+# Merging for plotting: reputation first
+rep.dox.interview$status <- "Interview Offer"
+rep.dox.matched$status <- "Matched"
+rep.dox <- dplyr::bind_rows(list(rep.dox.interview, rep.dox.matched))
+rep.dox <- rep.dox %>% dplyr::filter(degree %in% degree_list)
+rep.dox$degree <- factor(rep.dox$degree, levels = c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
+rep.dox$status <- factor(rep.dox$status, levels = c("Interview Offer", "Matched"))
+
+
+# Plotting by program size
+program_size_plot <- rep.dox %>% 
+  ggplot(aes(x = degree, y = program_size_mean, fill = status)) + 
+  geom_boxplot(outliers = F) + 
+  scale_fill_manual(values = c("#6cd4c5", "#e27c7c")) + 
+  labs(x = "", y = "Mean Program Size", fill = "Degree", title = "Residency Program Size") + 
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5))
+print(program_size_plot)
+
+
+# Plotting mean school reputation ranking for all schools with an interview offer and match offer
+reputation_plot <- rep.dox %>%
+  ggplot(aes(x = degree, y = reputation_rank_mean, fill = status)) + 
+  geom_boxplot(outliers = F) + 
+  scale_fill_manual(values = c("#6cd4c5", "#e27c7c")) + 
+  labs(x = "", y = "Schools Ranked by Reputation", fill = "Application Status", title = "School Rankings: Reputation") + 
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = "none")
+print(reputation_plot)
+
+
+# Merging for plotting: research output
+research.dox.interview$status <- "Interview Offer"
+research.dox.matched$status <- "Matched"
+research.dox <- dplyr::bind_rows(list(research.dox.interview, research.dox.matched))
+research.dox <- research.dox %>% dplyr::filter(degree %in% degree_list)
+research.dox$degree <- factor(research.dox$degree, levels = c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
+research.dox$status <- factor(research.dox$status, levels = c("Interview Offer", "Matched"))
+
+
+# Plotting mean school research output ranking for all schools with an interview offer and match offer
+research_plot <- research.dox %>%
+  ggplot(aes(x = degree, y = research_rank_mean, fill = status)) + 
+  geom_boxplot(outliers = F) + 
+  scale_fill_manual(values = c("#6cd4c5", "#e27c7c")) + 
+  labs(x = "", y = "Schools Ranked by Research Output", fill = "Application Status", title = "School Rankings: Research Output") + 
+  theme_classic() + 
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = "right")
+print(research_plot)
+
+
+# Patchwork to merge figures
+combined_plot <- (reputation_plot | research_plot) + plot_layout(ncol = 2, widths = c(1, 1.03))
+print(combined_plot)
+
+# Saving the plots
+#ggsave(plot = program_size_plot, filename = "figures/school_size_plot.pdf", width = 1800, height = 1000, dpi = 300, units = "px")
+#ggsave(plot = reputation_plot, filename = "figures/school_rankings_reputation.pdf", width = 1800, height = 1000, dpi = 300, units = "px")
+#ggsave(plot = research_plot, filename = "figures/school_rankings_research.pdf", width = 1800, height = 1000, dpi = 300, units = "px")
+#ggsave(plot = combined_plot, filename = "figures/combined_school_rankings.pdf", width = 4000, height = 1200, dpi = 300, units = "px")
+```
+
+```{r}
+# Plotting school ranks colored by ranking metric instead of interview offers / matched (only matched)
+rep2 <- rep.dox.matched %>% dplyr::select(c("degree", "reputation_rank_mean"))
+colnames(rep2) <- c("degree", "rank")
+rep2$rank_metric <- "Reputation"
+res2 <- research.dox.matched %>% dplyr::select("degree", "research_rank_mean")
+colnames(res2) <- c("degree", "rank")
+res2$rank_metric <- "Research"
+repres <- dplyr::bind_rows(rep2, res2)
+repres$rank_metric <- factor(repres$rank_metric, levels = c("Reputation", "Research"))
+repres <- repres %>% dplyr::filter(degree %in% degree_list)
+repres$degree <- factor(repres$degree, levels = c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
+
+
+# Plotting reputation and research rank for matched applicants
+repres_plot <- repres %>%
+  ggplot(aes(x = degree, y = rank, fill = rank_metric)) + 
+  geom_boxplot(outliers = F) + 
+  scale_fill_manual(values = c("#80B1D3", "#FB8072")) + 
+  labs(x = "", y = "Doximity Program Rankings", fill = "Ranking Metric", title = "School Rankings") + 
+  theme_classic() + 
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = "right")
+print(repres_plot)
+
+
+# Saving the plot
+#ggsave(plot = repres_plot, filename = "figures/school_rankings_matched.pdf", width = 1800, height = 1000, dpi = 300, units = "px")
+```
+
+```{r}
+# Plotting matched repuation ranks only and coloring by degree path
+rep.dox.matched2 <- rep.dox.matched[!is.na(rep.dox.matched$degree), ]
+rep.dox.matched2$degree <- factor(rep.dox.matched2$degree, levels = c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
+
+match_rank_plot <- rep.dox.matched2 %>%
+  ggplot(aes(x = degree, y = reputation_rank_mean, fill = degree)) + 
+  geom_boxplot(outliers = F) + 
+  scale_fill_brewer(palette = "Set3") +
+  labs(x = "", y = "Doximity Program Rankings", fill = "Degree Path", title = "School Rankings") + 
+  theme_classic() + 
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none")
+print(match_rank_plot)
+
+# Saving the plot
+#ggsave(plot = match_rank_plot, filename = "figures/school_rankings_matched2.pdf", width = 800, height = 1000, dpi = 300, units = "px")
+```
+
+
+```{r}
+# Exporting a csv for AI to match residency program names
+#dox <- read_xlsx(path = "tables/doximity_rankings.xlsx")
+#dox$program_specialty <- paste0(dox$program, "_", dox$specialty)  #used for merging in the next step
+#programs_dox <- unique(dox$program_specialty)
+#programs_star <- unique(programs.dox$program_specialty)
+
+#star_programs <- data.frame(star_programs = programs_star)
+#star_programs <- star_programs %>% tidyr::separate(col = "star_programs", into = c("program", "specialty"), sep = "_", remove = F)
+
+#unmatched_programs <- programs_star[!programs_star %in% programs_dox]
+#unmatched_programs <- data.frame(unmatched_programs = unmatched_programs)
+#unmatched_programs <- unmatched_programs %>% tidyr::separate(col = "unmatched_programs", into = c("program", "specialty"), sep = "_", remove = F)
+#unmatched_programs <- unmatched_programs %>% dplyr::arrange(specialty, program)
+
+# Exporting to csv
+#write_xlsx(x = df_programs, path = "tables/doximity_texasSTAR_unique_programs.xlsx")
+#write.csv(x = star_programs, file = "tables/texasSTAR_unique_programs.csv", row.names = F)
+#write.csv(x = unmatched_programs, file = "tables/unmatched_unique_programs.csv", row.names = F)
+```
+
+
+
+
+## 5.3 Linear regression for how interview offers change with application counts per degree path
+
+```{r}
+# Function to extract the results of a regression model
+model_extracter <- function(m, zt, test_name = NULL) {
+  # Summary of the model
+  print(summary(m))
+  
+  # Extract coefficients as a dataframe
+  coef_df <- data.frame(
+    term = names(coef(m)),
+    estimate = coef(m),
+    std_error = summary(m)$coefficients[,"Std. Error"],
+    zt_value = summary(m)$coefficients[, paste0(zt, " value")],
+    p_value = summary(m)$coefficients[, paste0("Pr(>|", zt, "|)")]
+  )
+  
+  # Calculate odds ratios and confidence intervals
+  coef_df$odds_ratio <- exp(coef_df$estimate)
+  
+  # Calculate 95% confidence intervals for odds ratios
+  coef_df$ci_lower <- exp(coef_df$estimate - 1.96 * coef_df$std_error)
+  coef_df$ci_upper <- exp(coef_df$estimate + 1.96 * coef_df$std_error)
+  
+  # Round numeric columns to 3 decimal places
+  coef_df$term <- NULL
+  coef_df_rownames <- row.names(coef_df)
+  coef_df <- sapply(coef_df, as.numeric) %>% as.data.frame()
+  coef_df$terms <- coef_df_rownames
+  coef_df$test <- test_name
+  
+  # Returning
+  return(coef_df)
+}
+
+```
+
+```{r}
+# Fitting a linear model with interaction of degree path
+model <- lm(InterviewOffer_Total ~ Applied_Total * degrees, data = overall_interview_df)  #X..Interviews.Attended
+
+model_df <- model_extracter(m = model, zt = "t")
+
+# Exporting to excel
+#write_xlsx(x = model_df, path = "tables/applications_interviews_linreg.xlsx", )
+```
+
+```{r}
+# Finding the quantiles to plot (we don't want to include huge outliers with 200+ applications)
+#quantile(x = overall_interview_df$Applied_Total, probs = c(0.01, 0.05, 0.25, 0.5, 0.75, 0.90, 0.95, 0.99))
+#quantile(x = overall_interview_df$X..Interviews.Attended, probs = c(0.01, 0.05, 0.25, 0.5, 0.75, 0.90, 0.95, 0.99))
+
+# Plotting linear regression lines
+overall_interview_df$degrees <- factor(x = overall_interview_df$degrees, levels = c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
+lin_reg_plot <- overall_interview_df %>% ggplot(aes(x = Applied_Total, y = InterviewOffer_Total, color = degrees)) +
+  geom_smooth(method = "lm", se = T, fill = "lightgrey") + 
+  scale_color_brewer(palette = "Dark2") +
+  coord_cartesian(xlim = c(0, 140), ylim = c(5, 30)) + 
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 7), expand = c(0, 0)) + 
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 6), expand = c(0, 0)) + 
+  labs(title = "Linear Regression: Applications x Interview Offers", x = "Total Applications", y = "Interview Offers", color = "Degrees") + 
+  theme_classic() + 
+  theme(plot.title = element_text(hjust = 0.5))
+print(lin_reg_plot)
+
+# exporting figure
+#ggsave(plot = lin_reg_plot, filename = "figures/linear_regression_plot.pdf", width = 1300, height = 1000, dpi = 300, units = "px")
+```
+
+
+
+## 5.4 Interviews (normalized)
+
+```{r}
+# Calculating mean, stdev, median, and IQR for applications, interview offers, and interviews attended per specialty
+spec.app.counts <- df_clean %>% 
+  dplyr::filter(degrees %in% c("MD-MSc")) %>%   #c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")
+  dplyr::group_by(Specialty) %>% 
+  dplyr::summarise(
+    specialty_counts = n(),
+    mean_applications = mean(Applied_Total, na.rm = T),
+    stdev_applications = sd(Applied_Total, na.rm = T),
+    median_applications = median(Applied_Total, na.rm = T),
+    iqr_applications = IQR(Applied_Total, na.rm = T),
+    mean_interview_offers = mean(InterviewOffer_Total, na.rm = T),
+    stdev_interview_offers = sd(InterviewOffer_Total, na.rm = T),
+    median_interview_offers = median(InterviewOffer_Total, na.rm = T),
+    iqr_interview_offers = IQR(InterviewOffer_Total, na.rm = T),
+    mean_interviews_attended = mean(X..Interviews.Attended, na.rm = T),
+    stdev_interviews_attended = sd(X..Interviews.Attended, na.rm = T),
+    median_interviews_attended = median(X..Interviews.Attended, na.rm = T),
+    iqr_interviews_attended = IQR(X..Interviews.Attended, na.rm = T),
+    mean_offer_rate = mean(interview_percent, na.rm = T),
+    stdev_offer_rate = mean(interview_percent, na.rm = T),
+    median_offer_rate = median(interview_percent, na.rm = T),
+    iqr_offer_rate = IQR(interview_percent, na.rm = T)
+  )
+
+# Filtering specialties with too low counts to be reliable
+spec.app.counts <- spec.app.counts[spec.app.counts$specialty_counts >= 5, ]
+
+# Exporting to excel
+#write_xlsx(x = spec.app.counts, path = "tables/summarized_app_interview_counts_MD-MSc.xlsx")
+```
+
+```{r}
+# Min-max normalizing after log transformation for right-skewed data. For applications, interview offers, and interviews attended for each specialty
+norm.apps.df <- merge(df_clean, spec.app.counts, by = "Specialty", all.x = T)
+norm.apps.df <- norm.apps.df %>% dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
+
+# Log transformed min-max scaling (good for right-skewed data)
+norm.apps.df$norm_applied_total <- ave(norm.apps.df$Applied_Total, norm.apps.df$Specialty,
+                                       FUN = function(x) {
+                                         logged <- log1p(x)
+                                         (logged - min(logged, na.rm = T)) / (max(logged, na.rm = T) - min(logged, na.rm = T))
+                                       })
+
+norm.apps.df$norm_interview_offers <- ave(norm.apps.df$InterviewOffer_Total, norm.apps.df$Specialty,
+                                          FUN = function(x) {
+                                            logged <- log1p(x)
+                                            (logged - min(logged, na.rm = T)) / (max(logged, na.rm = T) - min(logged, na.rm = T))
+                                            })
+
+norm.apps.df$norm_interviews_attend <- ave(norm.apps.df$X..Interviews.Attended, norm.apps.df$Specialty,
+                                           FUN = function(x) {
+                                             logged <- log1p(x)
+                                             (logged - min(logged, na.rm = T)) / (max(logged, na.rm = T) - min(logged, na.rm = T))
+                                             })
+
+# Factoring
+norm.apps.df$degrees <- factor(x = norm.apps.df$degrees, levels = c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
+```
+
+```{r}
+# Statistics for normalized interview metrics
+# Kruskal-Wallis test and post hoc analysis: Total Applications
+kruskal_res <- kruskal.test(norm_applied_total ~ degrees, data = norm.apps.df)
+pairwise_kruskal <- pairwise.wilcox.test(norm.apps.df$norm_applied_total, norm.apps.df$degrees, p.adjust.method = "fdr")
+print(kruskal_res)
+print(pairwise_kruskal)
+
+# Kruskal-Wallis test and post hoc analysis: Interview offers
+kruskal_res <- kruskal.test(norm_interview_offers ~ degrees, data = norm.apps.df)
+pairwise_kruskal <- pairwise.wilcox.test(norm.apps.df$norm_interview_offers, norm.apps.df$degrees, p.adjust.method = "fdr")
+print(kruskal_res)
+print(pairwise_kruskal)
+
+# Kruskal-Wallis test and post hoc analysis: Interviews attended
+kruskal_res <- kruskal.test(norm_interviews_attend ~ degrees, data = norm.apps.df)
+pairwise_kruskal <- pairwise.wilcox.test(norm.apps.df$norm_interviews_attend, norm.apps.df$degrees, p.adjust.method = "fdr")
+print(kruskal_res)
+print(pairwise_kruskal)
+```
+
+```{r}
+# Cleaning data for plotting
+cols_to_keep <- c("degrees", "norm_applied_total", "norm_interview_offers", "norm_interviews_attend")
+norm.plot.df <- norm.apps.df[ , cols_to_keep] %>% tidyr::pivot_longer(cols = c("norm_applied_total", "norm_interview_offers", "norm_interviews_attend"), names_to = "interview_metric", values_to = "values")
+norm.plot.df$interview_metric <- plyr::mapvalues(x = norm.plot.df$interview_metric, from = c("norm_applied_total", "norm_interview_offers", "norm_interviews_attend"), to = c("Applications", "Interview Offers", "Interviews Attended"))
+norm.plot.df$interview_metric <- factor(x = norm.plot.df$interview_metric, levels = c("Applications", "Interview Offers", "Interviews Attended"))
+
+# Plotting Normalized applications, interview offers, and interviews attended
+interview_plot <- norm.plot.df %>% ggplot(aes(x = degrees, y = values, fill = degrees)) + 
+  geom_boxplot(outliers = F) + 
+  facet_wrap(~interview_metric, ncol = 3, scales = "free_y") +
+  scale_fill_brewer(palette = "Set3") +
+  labs(x = "", y = "Normalized Number of Occurrences", fill = "Degrees", title = "Normalized Number of Applications and Interviews") + 
+  theme_classic() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        strip.background = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+print(interview_plot)
+
+# exporting figure
+#ggsave(plot = interview_plot, filename = "figures/interview_plot_normalized.pdf", width = 2800, height = 1500, dpi = 300, units = "px")
+```
+
+
+
+
+## 5.5 Signals, geographic connections, geographic preferences, and away rotations
+
+```{r}
+# Importing the matched doximity programs file
+pg <- read.csv(file = "tables/STAR_Programs_2017_2023_final_matched.csv", na.strings = "")
+
+# Filtering for students who matched
+matched_ids <- df_clean %>% 
+  dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")) %>% 
+  dplyr::filter(Matched == "Yes") %>% 
+  dplyr::filter(Survey.Year >= 2021) %>% 
+  dplyr::pull(STAR.ID)
+
+pg.filt <- pg %>% dplyr::filter(STAR.ID %in% matched_ids)
+
+# Filtering for non-NA values and factoring
+#pg.filt <- pg.filt[!is.na(pg.filt$Signaled.Program), ]
+pg.filt$Matched <- factor(x = pg.filt$Matched, levels = c("N", "Y"))
+pg.filt$Signaled.Program <- factor(x = pg.filt$Signaled.Program, levels = c("N", "Y"))
+pg.filt$Interview.Offer <- factor(x = pg.filt$Interview.Offer, levels = c("N", "Y"))
+pg.filt$Geographic.Connection <- factor(x = pg.filt$Geographic.Connection, levels = c("N", "Y"))
+pg.filt$Geographic.Preference.ERAS.Supp.App <- factor(x = pg.filt$Geographic.Preference.ERAS.Supp.App, levels = c("N", "Y"))
+pg.filt$Away.Rotation <- factor(x = pg.filt$Away.Rotation, levels = c("N", "Y"))
+pg.filt$degrees <- factor(x = pg.filt$degrees, levels = c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
+```
+
+```{r}
+# LR on Interview Offers
+model_outcome_list <- list()
+
+# Logistic regression of signaling - univariate
+model <- glm(Interview.Offer ~ Signaled.Program, data = pg.filt, family = "binomial")
+model_outcome_list[["signaled program univariate"]] <- model_extracter(m = model, zt = "z", test_name = "signaled program univariate")
+
+# Logistic regression of Geographic Connection - univariate
+model <- glm(Interview.Offer ~ Geographic.Connection, data = pg.filt, family = "binomial")
+model_outcome_list[["geographic connection univariate"]] <- model_extracter(m = model, zt = "z", test_name = "geographic connection univariate")
+
+# Logistic regression of Geographic Preference - univariate
+model <- glm(Interview.Offer ~ Geographic.Preference.ERAS.Supp.App, data = pg.filt, family = "binomial")
+model_outcome_list[["geographic preference univariate"]] <- model_extracter(m = model, zt = "z", test_name = "geographic preference univariate")
+
+# Logistic regression of Away Rotations - univariate
+model <- glm(Interview.Offer ~ Away.Rotation, data = pg.filt, family = "binomial")
+model_outcome_list[["away rotation univariate"]] <- model_extracter(m = model, zt = "z", test_name = "away rotation univariate")
+
+# Multivariate without interactors
+model <- glm(Interview.Offer ~ Signaled.Program + Geographic.Connection + Geographic.Preference.ERAS.Supp.App + Away.Rotation, data = pg.filt, family = "binomial")
+model_outcome_list[["multivariate"]] <- model_extracter(m = model, zt = "z", test_name = "multivariate")
+
+# Multivariate WITH degree path as interactors
+model <- glm(Interview.Offer ~ Signaled.Program * degrees + Geographic.Connection * degrees + Geographic.Preference.ERAS.Supp.App * degrees + Away.Rotation * degrees, data = pg.filt, family = "binomial")
+model_outcome_list[["multivariate with interactors"]] <- model_extracter(m = model, zt = "z", test_name = "multivariate with interactors")
+
+# Making a fancy table to export to word
+#fancy_table <- tbl_regression(model, exponentiate = T, show_single_row = c("Signaled.Program", "Geographic.Connection", "Geographic.Preference.ERAS.Supp.App", "Away.Rotation"))
+#fancy_table %>% as_flex_table() %>% save_as_docx(path = "tables/interview_offers_logistic_regression.docx")
+
+# Merging all results together
+model_df_interviews <- dplyr::bind_rows(model_outcome_list)
+model_df_interviews$outcome <- "interview_offer"
+
+# Checking residuals using DHARMa
+#simulation_df <- simulateResiduals(model, plot = T)
+
+# Exporting the dataframe
+#write_xlsx(x = model_df_interviews, path = "tables/interview_offers_logistic_regression.xlsx")
+```
+
+```{r}
+# LR on Matches
+model_outcome_list <- list()
+
+# Logistic regression of signaling - univariate
+model <- glm(Matched ~ Signaled.Program, data = pg.filt, family = "binomial")
+model_outcome_list[["signaled program univariate"]] <- model_extracter(m = model, zt = "z", test_name = "signaled program univariate")
+
+# Logistic regression of Geographic Connection - univariate
+model <- glm(Matched ~ Geographic.Connection, data = pg.filt, family = "binomial")
+model_outcome_list[["geographic connection univariate"]] <- model_extracter(m = model, zt = "z", test_name = "geographic connection univariate")
+
+# Logistic regression of Geographic Preference - univariate
+model <- glm(Matched ~ Geographic.Preference.ERAS.Supp.App, data = pg.filt, family = "binomial")
+model_outcome_list[["geographic preference univariate"]] <- model_extracter(m = model, zt = "z", test_name = "geographic preference univariate")
+
+# Logistic regression of Away Rotations - univariate
+model <- glm(Matched ~ Away.Rotation, data = pg.filt, family = "binomial")
+model_outcome_list[["away rotation univariate"]] <- model_extracter(m = model, zt = "z", test_name = "away rotation univariate")
+
+# Multivariate without interactors
+model <- glm(Matched ~ Signaled.Program + Geographic.Connection + Geographic.Preference.ERAS.Supp.App + Away.Rotation, data = pg.filt, family = "binomial")
+model_outcome_list[["multivariate"]] <- model_extracter(m = model, zt = "z", test_name = "multivariate")
+
+# Multivariate WITH degree path as interactors
+model <- glm(Matched ~ Signaled.Program * degrees + Geographic.Connection * degrees + Geographic.Preference.ERAS.Supp.App * degrees + Away.Rotation * degrees, data = pg.filt, family = "binomial")
+model_outcome_list[["multivariate with interactors"]] <- model_extracter(m = model, zt = "z", test_name = "multivariate with interactors")
+
+# Making a fancy table to export to word
+#fancy_table <- tbl_regression(model, exponentiate = T, show_single_row = c("Signaled.Program", "Geographic.Connection", "Geographic.Preference.ERAS.Supp.App", "Away.Rotation"))
+#fancy_table %>% as_flex_table() %>% save_as_docx(path = "tables/matches_logistic_regression.docx")
+
+# Merging all results together
+model_df_matches <- dplyr::bind_rows(model_outcome_list)
+model_df_matches$outcome <- "match"
+
+# Checking residuals using DHARMa
+#simulation_df <- simulateResiduals(model, plot = T)
+
+# Exporting the dataframe
+#write_xlsx(x = model_df_matches, path = "tables/matches_logistic_regression.xlsx")
+```
+
+```{r}
+# Graphing Odds Ratios for interview offers and matched based on signaling, geographic connections, geographic preferences, and away rotations (with degree path as an interactor)
+model_df <- dplyr::bind_rows(model_df_interviews, model_df_matches)
+
+# Making new names for terms
+terms <- c("Signaled.ProgramY", "Geographic.ConnectionY", 
+           "Geographic.Preference.ERAS.Supp.AppY", "Away.RotationY",
+           "degreesMD-PhD", "degreesMD-MPH", "degreesMD-MBA", "degreesMD-MSc",
+           "Signaled.ProgramY:degreesMD-PhD", "Signaled.ProgramY:degreesMD-MPH",
+           "Signaled.ProgramY:degreesMD-MBA", "Signaled.ProgramY:degreesMD-MSc",
+           "degreesMD-PhD:Geographic.ConnectionY", 
+           "degreesMD-MPH:Geographic.ConnectionY",
+           "degreesMD-MBA:Geographic.ConnectionY", 
+           "degreesMD-MSc:Geographic.ConnectionY",
+           "degreesMD-PhD:Geographic.Preference.ERAS.Supp.AppY",
+           "degreesMD-MPH:Geographic.Preference.ERAS.Supp.AppY",
+           "degreesMD-MBA:Geographic.Preference.ERAS.Supp.AppY",
+           "degreesMD-MSc:Geographic.Preference.ERAS.Supp.AppY",
+           "degreesMD-PhD:Away.RotationY", "degreesMD-MPH:Away.RotationY",
+           "degreesMD-MBA:Away.RotationY", "degreesMD-MSc:Away.RotationY")
+
+new_terms <- c("Signaled Program", "Geographic Connection", "Geographic Preference", "Away Rotation",
+               "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc",
+               "Signaled Program × MD-PhD", "Signaled Program × MD-MPH",
+               "Signaled Program × MD-MBA", "Signaled Program × MD-MSc",
+               "Geographic Connection × MD-PhD", "Geographic Connection × MD-MPH",
+               "Geographic Connection × MD-MBA", "Geographic Connection × MD-MSc",
+               "Geographic Preference × MD-PhD", "Geographic Preference × MD-MPH",
+               "Geographic Preference × MD-MBA", "Geographic Preference × MD-MSc",
+               "Away Rotation × MD-PhD", "Away Rotation × MD-MPH",
+               "Away Rotation × MD-MBA", "Away Rotation × MD-MSc")
+
+ordered_terms <- c("Signaled Program", 
+                   "Signaled Program × MD-PhD", "Signaled Program × MD-MPH",
+                   "Signaled Program × MD-MBA", "Signaled Program × MD-MSc",
+                   "Geographic Connection", 
+                   "Geographic Connection × MD-PhD", "Geographic Connection × MD-MPH",
+                   "Geographic Connection × MD-MBA", "Geographic Connection × MD-MSc",
+                   "Geographic Preference", 
+                   "Geographic Preference × MD-PhD", "Geographic Preference × MD-MPH",
+                   "Geographic Preference × MD-MBA", "Geographic Preference × MD-MSc",
+                   "Away Rotation",
+                    "Away Rotation × MD-PhD", "Away Rotation × MD-MPH",
+                   "Away Rotation × MD-MBA", "Away Rotation × MD-MSc"
+                   )
+
+# Tidying before plotting
+model_df <- model_df %>% 
+  dplyr::filter(test == "multivariate with interactors") %>% 
+  dplyr::filter(terms != "(Intercept)")
+
+model_df$terms <- plyr::mapvalues(x = model_df$terms, from = terms, to = new_terms)
+model_df <- model_df %>% dplyr::filter(! terms %in% c("MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
+model_df$terms <- factor(x = model_df$terms, levels = rev(ordered_terms))
+model_df$outcome <- factor(model_df$outcome, levels = c("interview_offer", "match"))
+model_df <- model_df %>% dplyr::mutate(
+  regulation = dplyr::case_when(
+    ci_lower > 1 & p_value < 0.05 ~ "significant",
+    ci_upper < 1 & p_value < 0.05 ~ "significant",
+    p_value >= 0.05 ~ "not significant"
+  )
+)
+model_df$regulation <- factor(model_df$regulation, levels = c("significant", "not significant"))
+model_df$p_value <- format(x = model_df$p_value, digits = 2)
+```
+
+```{r}
+# Plotting a forest plot
+forest_plot <- model_df %>% 
+  ggplot(aes(x = odds_ratio, xmin = ci_lower, xmax = ci_upper, y = terms, color = regulation)) + 
+  geom_point() + 
+  geom_errorbarh(height = 0.2) + 
+  facet_wrap(~outcome, ncol = 2) +
+  geom_vline(aes(xintercept = 1), color = "black", linetype = "dashed") + 
+  scale_x_continuous(n.breaks = 5, limits = c(0, 17)) +
+  scale_color_manual(values = c("#e27c7c", "#525252")) +   
+  labs(x = "Odds Ratio [95% CI]", y = "Predictors", title = "Logistic Regression: Interview Offers and Matches", color = "Odds") + 
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5, size = 12),
+        strip.background = element_blank())
+print(forest_plot)
+
+
+# Broken x axis to account for away rotations having a VERY high OR - Interview offers
+forest_plot_interviews <- model_df %>% 
+  dplyr::filter(outcome == "interview_offer") %>% 
+  dplyr::filter(!terms %in% c("Geographic Preference", "Geographic Preference × MD-MSc", "Geographic Preference × MD-MBA", "Geographic Preference × MD-MPH", "Geographic Preference × MD-PhD")) %>% 
+  ggplot(aes(x = odds_ratio, xmin = ci_lower, xmax = ci_upper, y = terms, color = regulation)) + 
+  geom_point() + 
+  geom_errorbarh(height = 0.2) + 
+  geom_vline(aes(xintercept = 1), color = "black", linetype = "dashed") + 
+  scale_x_break(breaks = c(4, 13)) + 
+  scale_color_manual(values = c("#e27c7c", "#525252")) +   
+  labs(x = "Odds Ratio [95% CI]", y = "Predictors", title = "Logistic Regression: Interview Offers", color = "Odds") + 
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5, size = 12),
+        strip.background = element_blank())
+forest_plot_interviews
+
+# Matches
+forest_plot_matches <- model_df %>% 
+  dplyr::filter(outcome == "match") %>% 
+    dplyr::filter(!terms %in% c("Geographic Preference", "Geographic Preference × MD-MSc", "Geographic Preference × MD-MBA", "Geographic Preference × MD-MPH", "Geographic Preference × MD-PhD")) %>% 
+  ggplot(aes(x = odds_ratio, xmin = ci_lower, xmax = ci_upper, y = terms, color = regulation)) + 
+  geom_point() + 
+  geom_errorbarh(height = 0.2) + 
+  geom_vline(aes(xintercept = 1), color = "black", linetype = "dashed") + 
+  scale_color_manual(values = c("#e27c7c", "#525252")) +   
+  labs(x = "Odds Ratio [95% CI]", y = "Predictors", title = "Logistic Regression: Matches", color = "Odds") + 
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5, size = 12),
+        strip.background = element_blank())
+print(forest_plot_matches)
+
+# Merging
+forest_plot_total <- forest_plot_interviews | forest_plot_matches
+
+# Saving the figure
+#ggsave(plot = forest_plot_total, filename = "figures/logistic_regression_interviews_matches.pdf", width = 4000, height = 1350, dpi = 300, units = "px")
+```
+
+```{r}
+# Feature Importances for multivariate LR predicting interview offers with degree path as interactors
+model_interviews <- glm(Interview.Offer ~ Signaled.Program + Geographic.Connection + Geographic.Preference.ERAS.Supp.App + Away.Rotation, data = pg.filt, family = "binomial")
+feat_importances_int <- car::Anova(model_interviews)
+feat_importances_int <- feat_importances_int %>% tibble::rownames_to_column(var = "feature")
+feat_importances_int$percent <- feat_importances_int$`LR Chisq` / sum(feat_importances_int$`LR Chisq`)
+feat_importances_int$status <- "Interview Offers"
+
+# Feature Importances for multivariate LR predicting matches with degree path as interactors
+model_matches <- glm(Matched ~ Signaled.Program + Geographic.Connection + Geographic.Preference.ERAS.Supp.App + Away.Rotation, data = pg.filt, family = "binomial")
+feat_importances_match <- car::Anova(model_matches)
+feat_importances_match <- feat_importances_match %>% tibble::rownames_to_column(var = "feature")
+feat_importances_match$percent <- feat_importances_match$`LR Chisq` / sum(feat_importances_match$`LR Chisq`)
+feat_importances_match$status <- "Matching"
+
+# Merging and exporting to excel
+feat_importances <- dplyr::bind_rows(list(feat_importances_int, feat_importances_match))
+#write_xlsx(x = feat_importances, path = "tables/interview_matching_LR_feat_importances.xlsx")
+```
+
+```{r}
+# Are dual degree students less likely to do away rotations? 
+aways <- programs.dox %>% dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")) %>% 
+  dplyr::group_by(STAR.ID) %>% 
+  dplyr::mutate(away_count = sum(Away.Rotation == "Y")) %>% 
+  dplyr::select(STAR.ID, degrees, away_count) %>% 
+  dplyr::distinct()
+
+# Making a contingency table of yes/no responses to away rotations
+aways$away_yes <- ifelse(test = aways$away_count > 0, yes = "yes", no = "no")
+conting_aways <- table(aways$degrees, aways$away_yes) %>% as.data.frame.matrix()
+
+# Stats for away rotations
+aways_stats <- pairwise_fisher_test(conting_aways, p.adjust.method = "fdr", detailed = TRUE)
+#write_xlsx(x = aways_stats, path = "tables/aways_stats.xlsx")
+
+# For student who do away rotations, do they do more of them?
+med_aways <- aways %>% dplyr::filter(away_yes == "yes") %>% 
+  dplyr::group_by(degrees) %>% 
+  dplyr::mutate(mean_aways = mean(away_count))
+kruskal_res <- kruskal.test(med_aways$away_count, med_aways$degrees)
+pairwise_kruskal <- pairwise.wilcox.test(med_aways$away_count, med_aways$degrees, p.adjust.method = "fdr")
+print(kruskal_res)
+print(distinct(med_aways[,c("degrees", "mean_aways")]))
+print(pairwise_kruskal)
+```
+
+```{r}
+# Are dual degree students less likely to have geographic connections? 
+geo <- programs.dox %>% dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")) %>% 
+  dplyr::group_by(STAR.ID) %>% 
+  dplyr::mutate(geo_count_yes = sum(Geographic.Connection == "Y"),
+                geo_count_no = sum(Geographic.Connection == "N")) %>% 
+  dplyr::select(STAR.ID, degrees, geo_count_yes, geo_count_no) %>% 
+  dplyr::distinct()
+geo$percent <- (geo$geo_count_yes / (geo$geo_count_no + geo$geo_count_yes)) * 100  # What percent of applications have geographic connections? 
+pairwise_kruskal <- pairwise.wilcox.test(geo$percent, med_aways$degrees, p.adjust.method = "fdr")
+print(pairwise_kruskal)
+
+# What percent of applications have a geographic connection per degree group?
+geo_percent <- geo %>% group_by(degrees) %>% summarise(mean_geo = mean(percent))
+print(geo_percent)
+
+# Making a contingency table of yes/no responses to geographic connections
+geo$geo_yes <- ifelse(test = geo$geo_count_yes > 0, yes = "yes", no = "no")
+conting_geo <- table(geo$degrees, geo$geo_yes) %>% as.data.frame.matrix()
+
+# Stats for geographic connections
+geo_stats <- pairwise_fisher_test(conting_geo, p.adjust.method = "fdr", detailed = TRUE)
+```
+
+```{r}
+# Are dual degree students less likely to signal? 
+sig <- programs.dox
+sig$signaled_NA <- ifelse(test = sig$Signaled.Program %in% c("N", "Y"), yes = "response", no = NA)
+sig <- sig %>% dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")) %>% 
+  dplyr::filter(signaled_NA == "response") %>% 
+  dplyr::group_by(STAR.ID) %>% 
+  dplyr::mutate(signal_yes = sum(Signaled.Program == "Y"),
+                signal_no = sum(Signaled.Program == "N")) %>% 
+  dplyr::select(STAR.ID, degrees, signal_yes, signal_no) %>% 
+  dplyr::distinct()
+sig$percent <- (sig$signal_yes / (sig$signal_no + sig$signal_yes)) * 100  # What percent of applications signal? 
+pairwise_kruskal <- pairwise.wilcox.test(sig$percent, sig$degrees, p.adjust.method = "fdr")
+print(pairwise_kruskal)
+
+# What percent of applications have a geographic connection per degree group?
+sig_percent <- sig %>% group_by(degrees) %>% summarise(mean_sig = mean(percent))
+print(sig_percent)
+
+# Making a contingency table of yes/no responses to geographic connections
+sig$sig_yes <- ifelse(test = sig$signal_yes > 0, yes = "yes", no = "no")
+conting_sig <- table(sig$degrees, sig$sig_yes) %>% as.data.frame.matrix()
+
+# Stats for geographic connections
+sig_stats <- pairwise_fisher_test(conting_sig, p.adjust.method = "fdr", detailed = TRUE)
+```
+
+
+
+
+## 5.6 Specialty-specific applications, interview offers, interview offer rate, and match rate
+
+```{r}
+# Plotting Differences in application counts and interview offers per specialty
+specialties <- c("Anesthesiology", "Child Neurology", "Dermatology", "Emergency Medicine", "Family Medicine", "Internal Medicine", "Internal Medicine-Pediatrics", "Neurological Surgery", "Neurology", "Obstetrics and Gynecology", "Ophthalmology", "Orthopaedic Surgery", "Otolaryngology", "Pathology", "Pediatrics", "Physical Medicine and Rehabilitation", "Plastic Surgery", "Psychiatry", "Radiation Oncology", "Radiology-Diagnostic", "Radiology-Interventional", "Surgery", "Urology")
+
+# Importing supplemental table 3
+spec <- read_xlsx("tables.xlsx", sheet = "Sup Table 3", skip = 1)
+colnames(spec) <- c("specialty", "app_counts", "app_mean", "app_stdev", "app_median", "app_iqr", "offer_mean", "offer_stdev", "offer_median", "offer_iqr", "attend_mean", "attend_stdev", "attend_median", "attend_iqr", "rate_mean", "rate_stdev", "rate_median", "rate_iqr")
+spec <- spec[spec$specialty %in% specialties, ]
+spec$specialty <- factor(x = spec$specialty, levels = rev(specialties))
+
+# Plotting total applications
+pal <- wes_palette("Zissou1", 100, type = "continuous")
+spec_app_plot <- spec %>% ggplot(aes(x = reorder(specialty, app_median), y = app_median, fill = app_median)) + 
+  geom_bar(stat = "identity") + 
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_fill_gradientn(colors = pal) +
+  labs(x = "", y = "Median Number of Applications", title = "Median Number of Applications") +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none")
+print(spec_app_plot)
+
+# Plotting interview offers
+spec_offer_plot <- spec %>% ggplot(aes(x = reorder(specialty, offer_median), y = offer_median, fill = offer_median)) + 
+  geom_bar(stat = "identity") + 
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_fill_gradientn(colors = pal) +
+  labs(x = "", y = "Median Interview Offers", title = "Median Interview Offers") +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none")
+print(spec_offer_plot)
+
+# Plotting interview offer rate
+spec_rate_plot <- spec %>% ggplot(aes(x = reorder(specialty, rate_median), y = rate_median, fill = rate_median)) + 
+  geom_bar(stat = "identity") + 
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_fill_gradientn(colors = pal) +
+  labs(x = "", y = "Median Interview Offer Rate (%)", title = "Median Interview Offer Rate") +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none")
+print(spec_rate_plot)
+
+# exporting figures
+#ggsave(plot = spec_app_plot, filename = "figures/application_specialty_plot.pdf", width = 2000, height = 1400, dpi = 300, units = "px")
+#ggsave(plot = spec_offer_plot, filename = "figures/interview-offer_specialty_plot.pdf", width = 2000, height = 1400, dpi = 300, units = "px")
+#ggsave(plot = spec_rate_plot, filename = "figures/offer-rate_specialty_plot.pdf", width = 2000, height = 1400, dpi = 300, units = "px")
+```
+
+```{r}
+# Differences in dual degree applications and interview offers per specialty  - DELETE? 
+spec <- read_xlsx("tables.xlsx", sheet = "Sup Table 4", range = "A3:CA26")
+spec <- spec[, c(1, 68:79)]
+colnames(spec) <- c("specialty", "app_MD-PhD", "app_MD-MPH", "app_MD-MBA", "app_MD-MSc", "offer_MD-PhD", "offer_MD-MPH", "offer_MD-MBA", "offer_MD-MSc", "attend_MD-PhD", "attend_MD-MPH", "attend_MD-MBA", "attend_MD-MSc")
+
+# Rotating
+spec2 <- spec %>% 
+  tidyr::pivot_longer(cols = c("app_MD-PhD", "app_MD-MPH", "app_MD-MBA", "app_MD-MSc", "offer_MD-PhD", "offer_MD-MPH", "offer_MD-MBA", "offer_MD-MSc", "attend_MD-PhD", "attend_MD-MPH", "attend_MD-MBA", "attend_MD-MSc"), names_to = "metric_degree", values_to = "percent_diff")
+spec2 <- spec2 %>% tidyr::separate(col = "metric_degree", sep = "_", into = c("metric", "degree"))
+spec2$degree <- factor(x = spec2$degree, levels = c("MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
+
+### Applications
+# Finding the order of specialties based on average deviance from MD 
+spec_means <- spec2 %>% dplyr::filter(metric == "app") %>% 
+  dplyr::group_by(specialty) %>% 
+  dplyr::summarise(mean_app = mean(abs(percent_diff), na.rm = TRUE), sd_app = sd(percent_diff, na.rm = T))
+spec_means$mean_sd <- spec_means$mean_app * spec_means$sd_app
+spec_means <- spec_means %>% dplyr::arrange(mean_sd)
+spec_order <- factor(spec_means$specialty, ordered = T)
+spec2$specialty <- factor(x = spec2$specialty, levels = spec_order)
+
+# Plotting difference in applications per specialty
+spec_app_plot <- spec2 %>% dplyr::filter(metric == "app") %>% 
+  ggplot(aes(x = specialty, y = percent_diff, color = degree, group = degree)) + 
+  geom_point() +
+  geom_line(aes(group = degree)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
+  scale_color_brewer(palette = "Set2") + 
+  labs(x = "", y = "Difference in Applications", title = "Mean Difference in Number of Applications") +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+print(spec_app_plot)
+
+
+### Interview Offers
+# Finding the order of specialties based on average deviance from MD 
+spec_means <- spec2 %>% dplyr::filter(metric == "offer") %>% 
+  dplyr::group_by(specialty) %>% 
+  dplyr::summarise(mean_app = mean(abs(percent_diff), na.rm = T), sd_app = sd(percent_diff, na.rm = T))
+spec_means$mean_sd <- spec_means$mean_app * spec_means$sd_app
+spec_means <- spec_means %>% dplyr::arrange(mean_sd)
+spec_order <- factor(spec_means$specialty, ordered = T)
+spec2$specialty <- factor(x = spec2$specialty, levels = spec_order)
+
+# Plotting difference in applications per specialty
+spec_offer_plot <- spec2 %>% dplyr::filter(metric == "offer") %>% 
+  ggplot(aes(x = specialty, y = percent_diff, color = degree, group = degree)) + 
+  geom_point() +
+  geom_line(aes(group = degree)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
+  scale_color_brewer(palette = "Set2") + 
+  labs(x = "", y = "Difference in Interview Offers", title = "Mean Difference in Interview Offers") +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+print(spec_offer_plot)
+
+# exporting figures
+#ggsave(plot = spec_app_plot, filename = "figures/application_specialty_degrees_plot.pdf", width = 2800, height = 1500, dpi = 300, units = "px")
+#ggsave(plot = spec_offer_plot, filename = "figures/interview_specialty_degrees_plot.pdf", width = 2800, height = 1500, dpi = 300, units = "px")
+```
+
+```{r}
+# Median applications, interview offers, and interview rates per specialty for MD students ONLY
+specialties <- c("Anesthesiology", "Child Neurology", "Dermatology", "Emergency Medicine", "Family Medicine", "Internal Medicine", "Internal Medicine-Pediatrics", "Neurological Surgery", "Neurology", "Obstetrics and Gynecology", "Ophthalmology", "Orthopaedic Surgery", "Otolaryngology", "Pathology", "Pediatrics", "Physical Medicine and Rehabilitation", "Plastic Surgery", "Psychiatry", "Radiation Oncology", "Radiology-Diagnostic", "Radiology-Interventional", "Surgery", "Urology")
+s1 <- df_clean %>% dplyr::filter(degrees == "MD") %>% 
+  dplyr::group_by(Specialty) %>% 
+  dplyr::summarise(
+    med_app = median(interview_percent),  # Applied_Total, InterviewOffer_Total, or interview_percent
+    med_count = n()
+  )
+s1 <- s1[s1$Specialty %in% specialties, ]
+
+# Median applications, interview offers, and interview rates per specialty for dual-degree students
+s2 <- df_clean %>% dplyr::filter(degrees %in% c("MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")) %>% 
+  dplyr::group_by(Specialty, degrees) %>% 
+  dplyr::summarise(
+    med_app_dual = median(interview_percent),  # Applied_Total, InterviewOffer_Total, or interview_percent
+    med_count_dual = n()
+  )
+s2 <- s2[s2$Specialty %in% specialties, ]
+
+# Merging dual-degree stats with MD stats for comparison
+s_merge <- merge(s2, s1, by = "Specialty")
+s_merge <- s_merge %>% dplyr::mutate(
+  med_app_dual = ifelse(med_count_dual < 5, NA_real_, med_app_dual)
+)
+  
+s_merge <- s_merge %>% dplyr::arrange(med_app)
+s_merge$Specialty <- factor(x = s_merge$Specialty, levels = unique(s_merge$Specialty))
+s_merge$degrees <- factor(s_merge$degrees, levels = c("MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
+s_merge$spec_degree <- paste0(s_merge$Specialty, "_", s_merge$degrees)
+```
+
+```{r}
+# Stats - pairwise wilcox for each specialty
+spec_stat_list <- list()
+for (spec in specialties) {
+  s_merge_stats <- df_clean %>% 
+    dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")) %>% 
+    dplyr::filter(Specialty == spec)  #specialty selection
+  
+  # Pairwise wilcox text - Applied_Total, InterviewOffer_Total, or interview_percent
+  s_merge_stats <- pairwise.wilcox.test(s_merge_stats$interview_percent, s_merge_stats$degrees, p.adjust.method = "fdr", exact = FALSE)
+  s_merge_stats <- s_merge_stats$p.value %>% as.data.frame()
+  s_merge_stats <- s_merge_stats %>% tibble::rownames_to_column(var = "degrees")
+  s_merge_stats <- s_merge_stats[,c(1, 2)]  #selection only for MD comparisons
+  s_merge_stats$Specialty <- spec
+  s_merge_stats$spec_degree <- paste0(s_merge_stats$Specialty, "_", s_merge_stats$degrees)
+  colnames(s_merge_stats) <- c("degress", "p_value", "Specialty", "spec_degree")
+  s_merge_stats <- s_merge_stats %>% dplyr::select(p_value, spec_degree)
+  
+  # Adding to stats list
+  spec_stat_list[[spec]] <- s_merge_stats
+}
+
+# Making one dataframe
+s_stats <- dplyr::bind_rows(spec_stat_list)
+
+# Merging with median stats
+s_merge <- merge(s_merge, s_stats, by = "spec_degree")
+s_merge$significant <- ifelse(s_merge$p_value < 0.05, yes = "significant", no = "not significant")
+s_merge$significant <- factor(s_merge$significant, levels = c("significant", "not significant"))
+
+# Export to excel - Applied_Total, InterviewOffer_Total, or interview_percent
+#write_xlsx(x = s_merge, path = "tables/interview-percent_specialty-degrees_stats.xlsx")
+```
+
+```{r}
+# Making alternating grey bars to highlight findings
+specialty_count <- length(unique(s_merge$Specialty))
+background_df <- data.frame(
+  specialty = specialties[seq(1, specialty_count, by = 2)],  # Select every other specialty
+  xmin = seq(1, specialty_count, by = 2) - 0.5,  # Start 0.5 units before the tick
+  xmax = seq(1, specialty_count, by = 2) + 0.5   # End 0.5 units after the tick
+)
+
+spec_stat_plot <- ggplot(s_merge, aes(x = Specialty, group = degrees)) +
+  geom_rect(data = background_df, 
+            aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf), 
+            fill = "#e3e3e3", inherit.aes = FALSE) + 
+  geom_line(aes(y = med_app), color = "black", size = 1) +  # main line
+  geom_point(aes(y = med_app_dual, color = degrees, shape = significant), position = position_dodge(width = 0.5), size = 3) + 
+  scale_shape_manual(values = c(19, 1)) +
+  scale_color_brewer(palette = "Set2") +
+  labs(x = "", y = "Median Interview Rate (%)", title = "Median Interview Rate per Specialty", shape = "Significance", color = "Dual-Degree") + 
+  theme_classic() + 
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+print(spec_stat_plot)
+
+# exporting figures
+#ggsave(plot = spec_stat_plot, filename = "figures/interview-rate_specialty-degrees_plot.pdf", width = 2500, height = 1300, dpi = 300, units = "px")
+```
+
+```{r}
+# Match rate by specialty
+specialties <- c("Anesthesiology", "Child Neurology", "Dermatology", "Emergency Medicine", "Family Medicine", "Internal Medicine", "Internal Medicine-Pediatrics", "Neurological Surgery", "Neurology", "Obstetrics and Gynecology", "Ophthalmology", "Orthopaedic Surgery", "Otolaryngology", "Pathology", "Pediatrics", "Physical Medicine and Rehabilitation", "Plastic Surgery", "Psychiatry", "Radiation Oncology", "Radiology-Diagnostic", "Radiology-Interventional", "Surgery", "Urology")
+
+# Match rate for MD students by specialty
+s3 <- df_clean %>% dplyr::filter(degrees == "MD") %>% 
+  dplyr::group_by(Specialty) %>% 
+  dplyr::summarise(
+    md_matched = sum(Matched == "Yes"),
+    md_unmatched = sum(Matched == "No")
+  )
+s3 <- s3[s3$Specialty %in% specialties, ]
+s3$md_match_rate <- (s3$md_matched / (s3$md_matched + s3$md_unmatched)) * 100
+
+# Match rate by specialty and dual-degree path
+s4 <- df_clean %>% dplyr::filter(degrees %in% c("MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")) %>% 
+  dplyr::group_by(Specialty, degrees) %>% 
+  dplyr::summarise(
+    dual_matched = sum(Matched == "Yes"),
+    dual_unmatched = sum(Matched == "No")
+  )
+s4 <- s4[s4$Specialty %in% specialties, ]
+s4$dual_match_rate <- (s4$dual_matched / (s4$dual_matched + s4$dual_unmatched)) * 100
+
+# Merging dual-degree match stats with MD stats for comparison
+s_merge <- merge(s4, s3, by = "Specialty")
+#s_merge <- s_merge %>% dplyr::mutate(
+#  dual_match_rate = dplyr::case_when(
+#    dual_matched < 5 | dual_unmatched < 5 ~ NA_real_,
+#    TRUE ~ dual_match_rate
+#  ))
+s_merge <- s_merge %>% dplyr::arrange(md_match_rate)
+s_merge$Specialty <- factor(x = s_merge$Specialty, levels = unique(s_merge$Specialty))
+s_merge$degrees <- factor(s_merge$degrees, levels = c("MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
+s_merge$spec_degree <- paste0(s_merge$Specialty, "_", s_merge$degrees)
+```
+
+```{r}
+# Stats for match rate per specialty - pairwise fisher test
+spec_stat_list <- list()
+for (spec in specialties) {
+  # Pairwise fisher exact tests for each specialty, with dual degrees relative to MD
+  sm_conting <- df_clean %>% dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
+  sm_conting <- sm_conting %>% dplyr::filter(Specialty == spec)
+  sm_conting <- table(sm_conting$degrees, sm_conting$Matched) %>% as.data.frame.matrix()
+  pw_fisher <- pairwise_fisher_test(sm_conting, p.adjust.method = "fdr", detailed = TRUE)
+  pw_fisher <- pw_fisher[pw_fisher$group1 == "MD", ]
+  pw_fisher$Specialty <- spec
+  pw_fisher$spec_degree <- paste0(pw_fisher$Specialty, "_", pw_fisher$group2)
+  cols_to_keep <- c("n", "estimate", "p", "conf.low", "conf.high", "p.adj", "p.adj.signif", "spec_degree")
+  pw_fisher <- pw_fisher[, cols_to_keep]
+  
+  # Adding to the list
+  spec_stat_list[[spec]] <- pw_fisher
+}
+
+# Concatenating the lists of statistical tests
+s_stats <- dplyr::bind_rows(spec_stat_list)
+
+# Merging with match rates
+s_merge <- merge(s_merge, s_stats, by = "spec_degree")
+
+# Export to excel
+#write_xlsx(x = s_merge, path = "tables/match-rate_specialty-degrees_stats.xlsx")
+```
+
+
+
+
+
+# 6. Match Outcomes
+
+## 6.1 Overall Match
+
+```{r}
+# Do MD/PhD students have a higher chance of matching?
+overall_match_df <- df_clean %>% dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
+overall_match <- as.data.frame.matrix(table(overall_match_df$degrees, overall_match_df$Matched))
+overall_match <- overall_match %>% dplyr::filter(Yes >= 5 & No >= 5)
+
+# Chi square and fisher
+#chisq.test(overall_match)
+fisher.test(overall_match, simulate.p.value = T)
+
+# Post hoc analysis
+match_rate_fisher <- pairwise_fisher_test(overall_match, p.adjust.method = "fdr", detailed = T)
+
+# Table for export
+table1 <- overall_match_df %>% 
+  summary_factorlist(
+    dependent = "degrees", explanatory = c("Matched", "Applied_Total", "InterviewOffer_Total", "X..Interviews.Attended"),
+    add_col_totals = TRUE, include_col_totals_percent = TRUE, 
+    p = TRUE, cont = "median", p_cat = "chisq"
+  )
+
+# Exporting to excel
+#write_xlsx(x = table1, path = "tables/match_apps.xlsx")
+```
+
+## 6.2 Specialty outcomes
+
+```{r}
+# Specialty outcome groups
+primary_care <- c("Family Medicine", "Internal Medicine", "Internal Medicine-Pediatrics", "Pediatrics")
+surgical <- c("Neurological Surgery", "Obstetrics and Gynecology", "Ophthalmology", "Orthopaedic Surgery", "Otolaryngology", "Plastic Surgery", "Surgery", "Thoracic Surgery", "Urology", "Vascular Surgery")
+procedural <- c("Anesthesiology", "Dermatology", "Emergency Medicine", "Radiation Oncology", "Radiology-Interventional")
+other <- c("Child Neurology", "Neurology", "Pathology", "Pediatrics-Medical Genetics", "Physical Medicine and Rehabilitation", "Psychiatry", "Radiology-Diagnostic")
+
+
+# Forming the specialty groups df
+degree_list <- c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")
+specialty_groups <- df_clean %>% dplyr::filter(degrees %in% degree_list)
+
+# Specialty groups
+specialty_groups <- specialty_groups %>% dplyr::mutate(
+  specialty_group = dplyr::case_when(
+    Specialty %in% primary_care ~ "primary care",
+    Specialty %in% surgical ~ "surgical",
+    Specialty %in% procedural ~ "procedural",
+    Specialty %in% other ~ "other"
+  )
+)
+
+# Calculating specialty counts per dual-degree group
+specialty_counts <- specialty_groups %>% dplyr::filter(!is.na(specialty_group)) %>% 
+  dplyr::group_by(degrees) %>% 
+  dplyr::summarise(
+    primary_care = sum(specialty_group=="primary care"),
+    surgical = sum(specialty_group=="surgical"),
+    procedural = sum(specialty_group=="procedural"),
+    other = sum(specialty_group=="other")
+)
+spec_cats <- c("primary_care", "surgical", "procedural", "other")
+specialty_counts$totals = rowSums(x = specialty_counts[,spec_cats])
+specialty_counts <- specialty_counts %>% tidyr::pivot_longer(cols = spec_cats, names_to = "specialty_group", values_to = "specialty_counts")
+specialty_counts$percent <- (specialty_counts$specialty_counts / specialty_counts$totals) * 100
+specialty_counts$degrees <- factor(x = specialty_counts$degrees, levels = c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
+specialty_counts$specialty_group <- factor(x = specialty_counts$specialty_group, levels = spec_cats)
+
+# Plotting
+specialty_group_plot <- specialty_counts %>%
+  ggplot(aes(x = specialty_group, y = percent, fill = degrees)) + 
+  geom_bar(stat = "identity", position = position_dodge(width = 0.9), color = "black", linewidth = 0.3) + 
+  geom_text(aes(label = round(percent, 1)),
+            position = position_dodge(width = 0.9),
+            vjust = -0.3, 
+            size = 2.7) +
+  scale_y_continuous(expand = c(0, 0)) + 
+  scale_fill_brewer(palette = "Set3") + 
+  labs(x = "", y = "Percent Specialty Category (%)", fill = "Degrees", title = "Specialty Categories") + 
+  theme_classic() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        strip.background = element_blank(),
+        plot.title = element_text(hjust = 0.5),
+        legend.position = "right")
+print(specialty_group_plot)
+
+# Saving the plot
+#ggsave(plot = specialty_group_plot, filename = "figures/specialty_groups.pdf", width = 2000, height = 1200, dpi = 300, units = "px")
+```
+
+```{r}
+# Stats for specialty groups per degree path
+spec_group_stat_list <- list()
+
+# MD-PhD
+s <- sg[c(1, 2), ] %>% t()
+s <- s[, c(2, 1)]
+s_fisher <- row_wise_fisher_test(s, p.adjust.method = "fdr", detailed = TRUE)
+s_fisher$degree <- "MD-PhD"
+spec_group_stat_list[["MD-PhD"]] <- s_fisher
+
+# MD-MPH
+s <- sg[c(1, 3), ] %>% t()
+s <- s[, c(2, 1)]
+s_fisher <- row_wise_fisher_test(s, p.adjust.method = "fdr", detailed = TRUE)
+s_fisher$degree <- "MD-MPH"
+spec_group_stat_list[["MD-MPH"]] <- s_fisher
+
+# MD-MBA
+s <- sg[c(1, 4), ] %>% t()
+s <- s[, c(2, 1)]
+s_fisher <- row_wise_fisher_test(s, p.adjust.method = "fdr", detailed = TRUE)
+s_fisher$degree <- "MD-MBA"
+spec_group_stat_list[["MD-MBA"]] <- s_fisher
+
+# MD-MSc
+s <- sg[c(1, 5), ] %>% t()
+s <- s[, c(2, 1)]
+s_fisher <- row_wise_fisher_test(s, p.adjust.method = "fdr", detailed = TRUE)
+s_fisher$degree <- "MD-MSc"
+spec_group_stat_list[["MD-MSc"]] <- s_fisher
+
+# Merging and exporting stats table
+spec_group_stats <- dplyr::bind_rows(spec_group_stat_list)
+#write_xlsx(x = spec_group_stats, path = "tables/specialty_group_stats.xlsx")
+```
+
+
+```{r}
+# Function for performing fisher's exact test comparing MD vs other dual degree options
+
+md_fisher <- function(comparison, dual_degree) {
+  # Importing specialties to keep (generated later)
+  specs_to_keep <- qs_read(file = "tables/specialties_to_keep.qs2")
+  
+  # Making a contingency table for MD and dual degree students
+  dual_conting <- df_clean %>% dplyr::filter(degrees %in% c("MD", dual_degree))  #"MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"
+  dual_conting <- table(dual_conting[[comparison]], dual_conting$degrees) %>% as.data.frame.matrix()
+  dual_conting <- dual_conting %>% dplyr::filter(.[[1]] >= 5 & .[[2]] >= 5)
+  dual_conting <- dual_conting[, c(2, 1)]
+  
+  # Chi Squared test and fisher's exact test to see if specialty choice is different between MD and MD-PhD
+  #chi_res <- chisq.test(dual_conting)
+  fish_res <- fisher.test(dual_conting, simulate.p.value = T)
+  print(fish_res)
+  
+  # Posthoc tests for chi square and fisher 
+  #chi.posthoc <- chisq.posthoc.test(dual_conting, method = "fdr")
+  fisher.posthoc <- row_wise_fisher_test(dual_conting, p.adjust.method = "fdr", detailed = T)
+  fisher.posthoc$degree <- dual_degree
+  
+  # Adding rows of NA values for specialties that were excluded due to low sample size (plotting purposes)
+  fisher.posthoc <- fisher.posthoc[fisher.posthoc$group %in% specs_to_keep, ]
+  degree_specs <- fisher.posthoc$group
+  missing_specs <- specs_to_keep[!specs_to_keep %in% degree_specs]
+  if (length(missing_specs) > 0) {
+    for (mspec in missing_specs) {
+      missing_df <- data.frame(group = mspec, stringsAsFactors = FALSE)
+      for (col in c("n", "estimate", "p", "conf.low", "conf.high", "method", "alternative", "p.adj", "p.adj.signif")) {
+        missing_df[[col]] <- NA
+      }
+      missing_df$degree <- dual_degree
+      fisher.posthoc <- dplyr::bind_rows(fisher.posthoc, missing_df)
+    }
+  }
+  
+  # Returning
+  return(fisher.posthoc)
+}
+```
+
+```{r}
+# Specialty outcomes
+mdphd_fisher <- md_fisher(comparison = "Specialty", dual_degree = "MD-PhD")
+mdphd_fisher$mdphd_p_adj <- mdphd_fisher$p.adj
+mdphd_fisher$mdphd_or_ci <- paste0(signif(mdphd_fisher$estimate, digits = 2), " [", signif(mdphd_fisher$conf.low, digits = 2), "-", signif(mdphd_fisher$conf.high, digits = 2), "]")
+
+mdmph_fisher <- md_fisher(comparison = "Specialty", dual_degree = "MD-MPH")
+mdmph_fisher$mdmph_p_adj <- mdmph_fisher$p.adj
+mdmph_fisher$mdmph_or_ci <- paste0(signif(mdmph_fisher$estimate, digits = 2), " [", signif(mdmph_fisher$conf.low, digits = 2), "-", signif(mdmph_fisher$conf.high, digits = 2), "]")
+
+mdmba_fisher <- md_fisher(comparison = "Specialty", dual_degree = "MD-MBA")
+mdmba_fisher$mdmba_p_adj <- mdmba_fisher$p.adj
+mdmba_fisher$mdmba_or_ci <- paste0(signif(mdmba_fisher$estimate, digits = 2), " [", signif(mdmba_fisher$conf.low, digits = 2), "-", signif(mdmba_fisher$conf.high, digits = 2), "]")
+
+mdmsc_fisher <- md_fisher(comparison = "Specialty", dual_degree = "MD-MSc")
+mdmsc_fisher$mdmsc_p_adj <- mdmsc_fisher$p.adj
+mdmsc_fisher$mdmsc_or_ci <- paste0(signif(mdmsc_fisher$estimate, digits = 2), " [", signif(mdmsc_fisher$conf.low, digits = 2), "-", signif(mdmsc_fisher$conf.high, digits = 2), "]")
+
+# Filtering for the same specialties
+specs <- c(mdphd_fisher$group, mdmph_fisher$group, mdmba_fisher$group, mdmsc_fisher$group)
+specs <- specs[!grepl("Preliminary", specs)]
+specs <- specs[!grepl("Transitional", specs)]
+specs_count <- table(specs)
+specs_count <- specs_count[specs_count > 1]
+specs_to_keep <- specs[specs %in% names(specs_count)] %>% unique()
+#qs_save(object = specs_to_keep, file = "tables/specialties_to_keep.qs2")  #saving for importing later
+
+# Merging Specialty outcomes
+specialty <- dplyr::bind_rows(list(mdphd_fisher[, c(1:11)], mdmph_fisher[, c(1:11)], mdmba_fisher[, c(1:11)], mdmsc_fisher[, c(1:11)]))
+specialty <- specialty[specialty$group %in% specs_to_keep, ]
+specialty$degree <- factor(x = specialty$degree, levels = c("MD-MSc", "MD-MBA", "MD-MPH", "MD-PhD"))
+specialty$p.adj <- signif(x = specialty$p.adj, digits = 2)
+specialty$group <- factor(x = specialty$group, levels = sort(specs_to_keep))
+specialty <- specialty %>% dplyr::mutate(
+  regulation = dplyr::case_when(
+    conf.high > 1 & p.adj < 0.05 ~ "significant",
+    conf.low < 1 & p.adj < 0.05 ~ "significant",
+    p.adj >= 0.05 ~ "not significant"
+  )
+)
+specialty$regulation <- factor(specialty$regulation, levels = c("significant", "not significant"))
+#specialty$regulation2 <- ifelse(specialty$regulation %in% c("Increased", "Decreased"), yes = "significant", no = "not significant")
+#specialty$regulation2 <- factor(specialty$regulation2, levels = c("significant", "not significant"))
+```
+
+```{r}
+# Table for export
+table2 <- df_clean %>% 
+  dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")) %>% 
+  dplyr::mutate(Specialty = as.character(Specialty)) %>% 
+  dplyr::filter(Specialty %in% specs_to_keep) %>% 
+  summary_factorlist(
+    dependent = "degrees", explanatory = c("Specialty")
+    #add_col_totals = TRUE, include_col_totals_percent = TRUE, 
+    #p = TRUE, cont = "median", p_cat = "chisq"
+  )
+table2$label <- NULL
+colnames(table2) <- c("group", "MD_percent", "MD-MBA_percent", "MD-MPH_percent", "MD-MSc_percent", "MD-PhD_percent")
+table2 <- merge(table2, mdmba_fisher[, c(1, 12, 13)], on = "group", all.x = T)
+table2 <- merge(table2, mdmph_fisher[, c(1, 12, 13)], on = "group", all.x = T)
+table2 <- merge(table2, mdmsc_fisher[, c(1, 12, 13)], on = "group", all.x = T)
+table2 <- merge(table2, mdphd_fisher[, c(1, 12, 13)], on = "group", all.x = T)
+
+# Exporting to excel
+#write_xlsx(x = table2, path = "tables/specialties.xlsx")
+```
+
+```{r}
+# Making a forest plot: MD-PhD
+forest_plot_mdphd <- specialty %>% dplyr::filter(degree == "MD-PhD") %>% 
+  ggplot(aes(x = estimate, xmin = conf.low, xmax = conf.high, y = group, color = regulation)) + 
+  geom_point() + 
+  geom_errorbarh(height = 0.2) + 
+  #geom_text(aes(label = p.adj, x = 5), hjust = 0, size = 3) + 
+  geom_vline(aes(xintercept = 1), color = "#5e5e5e", linetype = "dashed") + 
+  scale_y_discrete(limits = rev) + 
+  scale_x_break(breaks = c(11, 35)) + 
+  scale_x_continuous(n.breaks = 10, limits = c(0, 39)) +
+  scale_color_manual(values = c("#cf3e00", "#0053cf", "#5e5e5e")) +
+  labs(x = "Odds Ratio [95% CI]", y = "Specialty", title = "MD-PhD", color = "Odds") + 
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5, size = 12))
+print(forest_plot_mdphd)
+
+
+# Making a forest plot: MD-MPH
+forest_plot_mdmph <- specialty %>% dplyr::filter(degree == "MD-MPH") %>% 
+  ggplot(aes(x = estimate, xmin = conf.low, xmax = conf.high, y = group, color = regulation)) + 
+  geom_point() + 
+  geom_errorbarh(height = 0.2) + 
+  #geom_text(aes(label = p.adj, x = 5), hjust = 0, size = 3) + 
+  geom_vline(aes(xintercept = 1), color = "#5e5e5e", linetype = "dashed") + 
+  scale_y_discrete(limits = rev) + 
+  #scale_x_break(breaks = c(11, 35)) + 
+  scale_x_continuous(n.breaks = 6, limits = c(0, 3)) +
+  scale_color_manual(values = c("#cf3e00", "#0053cf", "#5e5e5e")) +
+  labs(x = "Odds Ratio [95% CI]", y = "Specialty", title = "MD-MPH", color = "Odds") + 
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5, size = 12))
+print(forest_plot_mdmph)
+
+
+# Making a forest plot: MD-MBA
+forest_plot_mdmba <- specialty %>% dplyr::filter(degree == "MD-MBA") %>% 
+  ggplot(aes(x = estimate, xmin = conf.low, xmax = conf.high, y = group, color = regulation)) + 
+  geom_point() + 
+  geom_errorbarh(height = 0.2) + 
+  #geom_text(aes(label = p.adj, x = 5), hjust = 0, size = 3) + 
+  geom_vline(aes(xintercept = 1), color = "#5e5e5e", linetype = "dashed") + 
+  scale_y_discrete(limits = rev) + 
+  #scale_x_break(breaks = c(11, 35)) + 
+  scale_x_continuous(n.breaks = 4, limits = c(0, 4)) +
+  scale_color_manual(values = c("#0053cf", "#5e5e5e")) +
+  labs(x = "Odds Ratio [95% CI]", y = "Specialty", title = "MD-MBA", color = "Odds") + 
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5, size = 12))
+print(forest_plot_mdmba)
+
+
+# Making a forest plot: MD-MSc
+forest_plot_mdmsc <- specialty %>% dplyr::filter(degree == "MD-MSc") %>% 
+  ggplot(aes(x = estimate, xmin = conf.low, xmax = conf.high, y = group, color = regulation)) + 
+  geom_point() + 
+  geom_errorbarh(height = 0.2) + 
+  #geom_text(aes(label = p.adj, x = 5), hjust = 0, size = 3) + 
+  geom_vline(aes(xintercept = 1), color = "#5e5e5e", linetype = "dashed") + 
+  scale_y_discrete(limits = rev) + 
+  #scale_x_break(breaks = c(11, 35)) + 
+  scale_x_continuous(n.breaks = 7, limits = c(0, 7)) +
+  scale_color_manual(values = c("#cf3e00", "#0053cf", "#5e5e5e")) +
+  labs(x = "Odds Ratio [95% CI]", y = "Specialty", title = "MD-MSc", color = "Odds") + 
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5, size = 12))
+print(forest_plot_mdmsc)
+
+# exporting figures
+#ggsave(plot = forest_plot_mdphd, filename = "figures/specialty_forest_plot_mdphd.pdf", width = 2000, height = 2000, dpi = 300, units = "px")
+#ggsave(plot = forest_plot_mdmph, filename = "figures/specialty_forest_plot_mdmph.pdf", width = 2000, height = 2000, dpi = 300, units = "px")
+#ggsave(plot = forest_plot_mdmba, filename = "figures/specialty_forest_plot_mdmba.pdf", width = 2000, height = 2000, dpi = 300, units = "px")
+#ggsave(plot = forest_plot_mdmsc, filename = "figures/specialty_forest_plot_mdmsc.pdf", width = 2000, height = 2000, dpi = 300, units = "px")
+```
+
+```{r}
+# Specialty groups
+primary_care <- c("Family Medicine", "Internal Medicine", "Internal Medicine-Pediatrics", "Pediatrics")
+surgical <- c("Neurological Surgery", "Obstetrics and Gynecology", "Ophthalmology", "Orthopaedic Surgery", "Otolaryngology", "Plastic Surgery", "Surgery", "Urology")  #"Thoracic Surgery", "Vascular Surgery"
+procedural <- c("Anesthesiology", "Dermatology", "Emergency Medicine", "Radiation Oncology", "Radiology-Interventional")
+other <- c("Child Neurology", "Neurology", "Pathology", "Physical Medicine and Rehabilitation", "Psychiatry", "Radiology-Diagnostic")  #excluded "Pediatrics-Medical Genetics" because it was off the charts high (37 OR!)
+
+# Create a data frame for the alternating shading
+specialty_filt <- specialty %>% dplyr::filter(group %in% other)  #optional filter for specialties
+shading_data <- data.frame(
+  ymin = seq(0.5, length(unique(specialty_filt$group)) - 0.5, by = 1), # Adjust based on your y-axis ticks
+  ymax = seq(1.5, length(unique(specialty_filt$group)) + 0.5, by = 1), # Adjust based on your y-axis ticks
+  fill = rep(c("a", "b"), length.out = length(unique(specialty_filt$group))) # Alternating fill colors
+)
+
+# Making a forest plot
+forest_plot <- specialty_filt %>%
+  ggplot(aes(x = estimate, xmin = conf.low, xmax = conf.high, y = group, color = degree, shape = regulation)) + 
+  geom_rect(data = shading_data, aes(ymin = ymin, ymax = ymax, fill = fill), 
+            xmin = -Inf, xmax = Inf, alpha = 0.5, inherit.aes = FALSE) + 
+  geom_vline(aes(xintercept = 1), color = "#5e5e5e", linetype = "dashed") + 
+  geom_errorbarh(height = 0.5, position=position_dodge(width = 0.7)) + 
+  geom_point(position=position_dodge(width = 0.7)) + 
+  scale_shape_manual(values = c(19, 1)) +
+  scale_y_discrete(limits = rev) + 
+  #coord_cartesian(xlim = c(0, 2.5)) +
+  #scale_color_brewer(palette = "Set2") + 
+  scale_color_manual(values = c("#E78AC3", "#8DA0CB", "#FC8D62", "#66C2A5")) +
+  scale_fill_manual(values = c("a" = "lightgray", "b" = "white"), guide = "none") + # Define fill colors
+  labs(x = "Odds Ratio [95% CI]", y = "", title = "Other", color = "Degree Path", shape = "Significance") + 
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5, size = 12))
+print(forest_plot)
+
+# Saving the plot
+#ggsave(plot = forest_plot, filename = "figures/specialty_forest_plot_other.pdf", width = 2000, height = 1050, dpi = 300, units = "px")
+```
+
+
+
+
+## 6.3 AAMC MD/PhD Correlations in Specialties
+
+```{r}
+# Importing data from AAMC
+aamc <- read_xlsx("AAMC_data/AAMC_Table-B4_processed.xlsx")
+aamc <- aamc[aamc$year > 2016, ]  #filtering to get the years 2017-2023 (same as Texas STAR)
+aamc_totals <- aamc[aamc$specialties == "Total", ]
+aamc_totals$total_active_nomdphd <- aamc_totals$total_active - aamc_totals$mdphd_active
+aamc <- aamc[aamc$specialties != "Total", ]
+
+# Adding some specialties together for replicated specialties
+gg <- c("Pediatrics/Medical Genetics", "Medical Genetics and Genomics")
+aamc_gg <- aamc[aamc$specialties %in% gg, ]
+aamc_gg <- aamc_gg %>% dplyr::group_by(year) %>% 
+  dplyr::summarise(mdphd_firstyear = sum(mdphd_firstyear, na.rm = T), mdphd_active = sum(mdphd_active, na.rm = T), total_active = sum(total_active, na.rm = T))
+aamc_gg$specialties <- "Pediatrics/Medical Genetics"
+
+ir <- c("Radiology, Interventional: Integrated", "Radiology, Interventional: Independent", "Vascular and Interventional Radiology (Radiology: Diagnostic)")
+aamc_ir <- aamc[aamc$specialties %in% ir, ]
+aamc_ir <- aamc_ir %>% dplyr::group_by(year) %>% 
+  dplyr::summarise(mdphd_firstyear = sum(mdphd_firstyear, na.rm = T), mdphd_active = sum(mdphd_active, na.rm = T), total_active = sum(total_active, na.rm = T))
+aamc_ir$specialties <- "Radiology, Interventional: Integrated"
+
+# Filtering out replicated specialties and adding in the summed ones
+aamc <- aamc[!aamc$specialties %in% c(gg, ir), ]
+aamc <- dplyr::bind_rows(list(aamc, aamc_gg, aamc_ir))
+```
+
+```{r}
+# Mapping aamc specialties to Texas STAR ones
+specialties_aamc <- c("Anesthesiology", "Child Neurology", "Dermatology", "Emergency Medicine", "Family Medicine", "Internal Medicine", "Internal Medicine/Pediatrics", "Neurological Surgery", "Neurology", "Obstetrics and Gynecology", "Ophthalmology", "Orthopaedic Surgery", "Otolaryngology", "Pathology: Anatomic and Clinical", "Pediatrics", "Pediatrics/Medical Genetics", "Physical Medicine and Rehabilitation", "Plastic Surgery", "Psychiatry", "Radiation Oncology", "Radiology: Diagnostic", "Radiology, Interventional: Integrated", "Surgery: General", "Thoracic Surgery", "Urology", "Vascular Surgery: Integrated")  #aamc
+#Medical Genetics and Genomics
+#Radiology, Interventional: Integrated, Radiology, Interventional: Independent, Vascular and Interventional Radiology (Radiology: Diagnostic)
+
+specialties_star <- c("Anesthesiology", "Child Neurology", "Dermatology", "Emergency Medicine", "Family Medicine", "Internal Medicine", "Internal Medicine-Pediatrics", "Neurological Surgery", "Neurology", "Obstetrics and Gynecology", "Ophthalmology", "Orthopaedic Surgery", "Otolaryngology", "Pathology", "Pediatrics", "Pediatrics-Medical Genetics", "Physical Medicine and Rehabilitation", "Plastic Surgery", "Psychiatry", "Radiation Oncology", "Radiology-Diagnostic", "Radiology-Interventional", "Surgery", "Thoracic Surgery", "Urology", "Vascular Surgery")  #Texas STAR
+
+# Filtering and calculating practicing MD-PhD residents vs non MD-PhD residents
+aamc_filt <- aamc[aamc$specialties %in% specialties_aamc, ]
+aamc_filt$specialties <- plyr::mapvalues(x = aamc_filt$specialties, from = specialties_aamc, to = specialties_star)
+aamc_filt$total_active_nomdphd <- aamc_filt$total_active - aamc_filt$mdphd_active
+aamc_filt <- aamc_filt %>% tidyr::pivot_longer(cols = c("mdphd_active", "total_active_nomdphd"), names_to = "degree", values_to = "counts")
+aamc_filt$degree <- plyr::mapvalues(x = aamc_filt$degree, from = c("mdphd_active", "total_active_nomdphd"), to = c("MD-PhD", "Total (excluding MD-PhD)"))
+aamc_filt$degree <- factor(x = aamc_filt$degree, levels = c("MD-PhD", "Total (excluding MD-PhD)"))
+aamc_filt <- aamc_filt %>% group_by(specialties, degree) %>% 
+  dplyr::summarise(specialty_counts = mean(counts, na.rm = TRUE))
+aamc_filt$specialty_counts <- round(aamc_filt$specialty_counts)
+aamc_filt <- aamc_filt %>% tidyr::pivot_wider(names_from = "degree", values_from = "specialty_counts")
+
+# Making a dataframe matrix 
+aamc_filt <- aamc_filt %>% tibble::column_to_rownames(var = "specialties") %>% as.data.frame.matrix()
+```
+
+```{r}
+# Stats for AAMC
+fish.results <- fisher.test(aamc_filt, simulate.p.value = T)
+#chi.results <- chisq.test(aamc_filt)
+print(fish.results)
+
+# Posthoc stats
+fish.posthoc <- row_wise_fisher_test(aamc_filt, p.adjust.method = "fdr", detailed = T)
+fish.posthoc <- fish.posthoc %>% dplyr::mutate(
+  representation = dplyr::case_when(
+    p.adj < 0.05 & conf.low > 1 ~ "MD-PhD Overepresented",
+    p.adj < 0.05 & conf.high < 1 ~ "MD-PhD Underrepresented",
+    p.adj > 0.05 ~ "not significant"
+  )
+)
+fish.posthoc$representation <- factor(fish.posthoc$representation, levels = c("MD-PhD Overepresented", "MD-PhD Underrepresented", "not significant"))
+
+# Optional export to excel 
+#write_xlsx(x = fish.posthoc, path = "tables/specialties_aamc.xlsx")
+
+# Merging with stats from Texas STAR
+fish.posthoc.merge <- fish.posthoc[, 1:10]
+colnames(fish.posthoc.merge) <- paste0(colnames(fish.posthoc.merge), "_aamc")
+colnames(fish.posthoc.merge)[1] <- "group"
+
+specialty.merge <- specialty %>% dplyr::filter(degree == "MD-PhD")
+specialty.merge <- specialty.merge[, 1:10]
+colnames(specialty.merge) <- paste0(colnames(specialty.merge), "_star")
+colnames(specialty.merge)[1] <- "group"
+
+aamc.star.specialties <- merge(x = fish.posthoc.merge, y = specialty.merge, on = "group")
+aamc.star.specialties <- aamc.star.specialties %>% 
+  dplyr::mutate(
+    significance = dplyr::case_when(
+      p.adj_aamc < 0.05 & p.adj_star < 0.05 ~ "Both AAMC and Texas STAR",
+      p.adj_aamc < 0.05 & p.adj_star >= 0.05 ~ "Only AAMC",
+      p.adj_aamc >= 0.05 & p.adj_star < 0.05 ~ "Only Texas STAR",
+      p.adj_aamc >= 0.05 & p.adj_star >= 0.05 ~ "Not Significant"
+    )
+  )
+aamc.star.specialties$significance <- factor(x = aamc.star.specialties$significance, levels = c("Both AAMC and Texas STAR", "Only AAMC", "Only Texas STAR", "Not Significant"))
+```
+
+```{r}
+# Plotting OR and 95% CIs
+forest_plot <- fish.posthoc %>% 
+  ggplot(aes(x = estimate, xmin = conf.low, xmax = conf.high, y = reorder(group, estimate), color = representation)) + 
+  geom_point() + 
+  geom_errorbarh(height = 0.2) + 
+  geom_text(aes(label = p.adj, x = 8.5), hjust = 0, size = 3) + 
+  geom_vline(aes(xintercept = 1), color = "black", linetype = "dashed") + 
+  scale_x_continuous(n.breaks = 10, limits = c(0, 10)) +  #2.8
+  scale_color_manual(values = c("#cf3e00", "#0053cf", "#5e5e5e")) +
+  labs(x = "Odds Ratio [95% CI]", y = "Specialty", title = "Specialty Outcomes for MD-PhD Relative to MD-Only (AAMC Data)", color = "MD-PhD Representation") + 
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5, size = 12))
+print(forest_plot)
+
+# exporting figure
+#ggsave(plot = forest_plot, filename = "figures/aamc_specialty_forest_plot.png", width = 2500, height = 2000, dpi = 300, units = "px")
+```
+
+```{r}
+# Stats for linear regression of texas STAR OR predicting AAMC OR
+aamc.star.specialties.filt <- aamc.star.specialties %>% dplyr::filter(group != "Pediatrics-Medical Genetics")
+lm_model <- lm(estimate_aamc ~ estimate_star, data = aamc.star.specialties.filt)
+summary(lm_model)
+
+# Plotting a dual odds ratio plot
+dual_or_plot <- aamc.star.specialties %>% dplyr::filter(group != "Pediatrics-Medical Genetics") %>% 
+  ggplot(aes(x = log(estimate_star), y = log(estimate_aamc), color = "#00C0C0")) +   #color = significance
+  geom_vline(xintercept = log(1), color = "grey", alpha = 0.6, linetype = "dashed") + 
+  geom_hline(yintercept = log(1), color = "grey", alpha = 0.6, linetype = "dashed") + 
+  geom_smooth(method = "lm", se = FALSE, color = "black", size = 1.1) + 
+  #geom_errorbar(aes(xmin = log(conf.low_star), xmax = log(conf.high_star)), width = 0.1) + 
+  #geom_errorbar(aes(ymin = log(conf.low_aamc), ymax = log(conf.high_aamc)), width = 0.1) + 
+  geom_point(size = 2) + 
+  scale_color_brewer(palette = "Set2") +
+  labs(x = "log(OR: TexasSTAR)", y = "log(OR: AAMC)", color = "Significance", title = "Correlation between TexasSTAR and AAMC") + 
+  theme_classic() + 
+  theme(plot.title = element_text(hjust = 0.5))
+print(dual_or_plot)
+
+# Saving the plot
+#ggsave(plot = dual_or_plot, filename = "figures/dual_AAMC_TexasSTAR_specialty_log-OR.pdf", width = 1500, height = 1200, dpi = 300, units = "px")
+
+# Saving the excel doc
+#write_xlsx(x = aamc.star.specialties, path = "tables/aamc_texasstar_correlation.xlsx")
+```
+
+
+
+```{r}
+# Tidying for plotting a plot that looks at MD/PhD percent change over time
+aamc_totals_plot <- aamc_totals
+aamc_totals_plot$percent_change_totals <- ((aamc_totals_plot$total_active_nomdphd - 80085) / 80085) * 100
+aamc_totals_plot$percent_change_mdphd <- ((aamc_totals_plot$mdphd_active - 2834) / 2834) * 100
+aamc_totals_plot <- aamc_totals_plot %>% 
+  tidyr::pivot_longer(cols = c("percent_change_mdphd", "percent_change_totals"), names_to = "degree", values_to = "percent_change")
+aamc_totals_plot$degree <- plyr::mapvalues(x = aamc_totals_plot$degree, from = c("percent_change_mdphd", "percent_change_totals"), to = c("MD-PhD", "Total (excluding MD-PhD)"))
+aamc_totals_plot$degree <- factor(x = aamc_totals_plot$degree, levels = c("Total (excluding MD-PhD)", "MD-PhD"))
+
+# Plotting total MD/PhD and total MD
+aamc_totals_plot <- aamc_totals_plot %>% 
+  ggplot(aes(x = year, y = percent_change, color = degree)) + 
+  geom_line() + 
+  geom_point() + 
+  scale_x_continuous(breaks = seq(min(aamc_totals_plot$year), max(aamc_totals_plot$year), by = 1)) + 
+  scale_color_brewer(palette = "Set2") +
+  labs(x = "Year", y = "Percent Growth from 2017 (%)", color = "Degree", title = "Growth of MD-PhD Programs Compared to Other Training Paths") + 
+  theme_classic() + 
+  theme(plot.title = element_text(hjust = 0.5))
+print(aamc_totals_plot)
+
+# Saving the plot
+#ggsave(plot = aamc_totals_plot, filename = "figures/AAMC_totals_overtime.pdf", width = 2000, height = 1400, dpi = 300, units = "px")
+```
+
+
+
+
+
+
+
+
+## 6.4 Multiple Logistic Regression for Predicting Match Success
+
+```{r}
+# Counts for non-NA columns
+non_na_lengths <- apply(df_logit, 2, function(x) length(na.omit(x)))
+```
+
+```{r}
+# Logistic regression function for individual degrees
+logistic_regression <- function(degree, verbose = FALSE) {
+  
+  # Cleaning the df
+  df_degree <- df_clean %>% dplyr::filter(degrees == degree) 
+  
+  # Fitting the negative binomial regression
+  logit_model <- glm(Matched ~ Public_School + IvyP + step1_centered + step2_centered + X..Honored.Clerkships + Honors.A.This.Specialty + AOA.Sigma + GHHS + Research.Year + Absence.Year + Couples.Match + X..Research.Experiences + X..Abstracts..Pres..Posters + X..Peer.Rev.Publications + X..Volunteer.Experiences + X..Leadership.Positions + Required.to.Remediate, data = df_degree, family = "binomial")  # + InterviewOffer_Total + Applied_Total + Total.Costs.Centered
+  if (verbose) {
+    print(summary(logit_model))
+  }
+
+  # Making a dataframe for exporting the results
+  model_df <- summary(logit_model)$coefficients %>% as.data.frame()
+  colnames(model_df) <- c("estimate", "standard_error", "z_value", "p_value")
+  model_df$OR <- exp(model_df$estimate)
+  ci_df <- exp(confint(logit_model)) %>% as.data.frame()
+  colnames(ci_df) <- c("conf.low", "conf.high")
+  model_df <- merge(model_df, ci_df, by=0)
+  model_df <- model_df[model_df$Row.names != "(Intercept)", ]
+  model_df$degree <- degree
+  model_df <- model_df %>% dplyr::mutate(
+    likelihood = dplyr::case_when(
+      conf.low > 1 & p_value < 0.05 ~ "Higher",
+      conf.high < 1 & p_value < 0.05 ~ "Lower",
+      p_value > 0.05 ~ "No Change"
+    )
+  )
+  model_df$likelihood <- factor(x = model_df$likelihood, levels = c("Higher", "No Change", "Lower"))
+  
+  # Feature importances
+  feat_importances <- car::Anova(logit_model)
+  feat_importances <- feat_importances %>% tibble::rownames_to_column(var = "feature")
+  feat_importances$percent <- (feat_importances$`LR Chisq` / sum(feat_importances$`LR Chisq`)) * 100
+  feat_importances$degree <- degree
+  
+  # Returning odds ratios and feature importances for multiple logistic regression
+  return(list(model_df, feat_importances))
+}
+```
+
+```{r}
+# Multiple logistic regression for each degree path
+logit_md <- logistic_regression(degree = "MD", verbose = F)
+md_or <- logit_md[[1]]
+md_feat <- logit_md[[2]]
+
+logit_mdphd <- logistic_regression(degree = "MD-PhD", verbose = F)
+mdphd_or <- logit_mdphd[[1]]
+mdphd_feat <- logit_mdphd[[2]]
+
+logit_mdmph <- logistic_regression(degree = "MD-MPH", verbose = F)
+mdmph_or <- logit_mdmph[[1]]
+mdmph_feat <- logit_mdmph[[2]]
+
+logit_mdmba <- logistic_regression(degree = "MD-MBA", verbose = F)
+mdmba_or <- logit_mdmba[[1]]
+mdmba_feat <- logit_mdmba[[2]]
+
+logit_mdmsc <- logistic_regression(degree = "MD-MSc", verbose = F)
+mdmsc_or <- logit_mdmsc[[1]]
+mdmsc_feat <- logit_mdmsc[[2]]
+
+# Combining OR dataframes and getting ready to plot
+logit_or <- dplyr::bind_rows(list(md_or, mdphd_or, mdmph_or, mdmba_or, mdmsc_or))
+logit_or$Row.names <- as.character(logit_or$Row.names)
+logit_or$degree <- factor(x = logit_or$degree, levels = c("MD-MSc", "MD-MBA", "MD-MPH", "MD-PhD", "MD"))
+logit_or$significance <- ifelse(test = logit_or$p_value < 0.05, yes = "Significant", no = "Not Significant")
+logit_or$significance <- factor(x = logit_or$significance, levels = c("Significant", "Not Significant"))
+
+# Combining feature importances and getting ready to plot
+logit_features <- dplyr::bind_rows(list(md_feat, mdphd_feat, mdmph_feat, mdmba_feat, mdmsc_feat))
+logit_features$degree <- factor(x = logit_features$degree, levels = c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
+original_features <- c("Absence.Year", "AOA.Sigma", "Couples.Match", "GHHS", "Honors.A.This.Specialty", "IvyP", "Public_School", "Required.to.Remediate", "Research.Year", "step1_centered", "step2_centered", "X..Abstracts..Pres..Posters", "X..Honored.Clerkships",  "X..Leadership.Positions", "X..Peer.Rev.Publications", "X..Research.Experiences", "X..Volunteer.Experiences")
+renamed_features <- c("Year of Absence", "AOA", "Couples Match", "GHHS", "Honors in Specialty", "Ivy League", "Public School", "Required to Remediate", "Research Year", "STEP1 Score", "STEP2 Score", "Number of Abstracts Presentations Posters", "Number of Honored Clerkships", "Number of Leadership Positions", "Number of Peer Reviewed Publications", "Number of Research Experiences", "Number of Volunteer Experiences")
+logit_features$feature <- plyr::mapvalues(x = logit_features$feature, from = original_features, to = renamed_features)
+logit_features <- logit_features %>% dplyr::group_by(feature) %>% 
+  dplyr::mutate(mean_feature = mean(percent, na.rm = TRUE))
+
+# Exporting as excel
+#write_xlsx(x = logit_features, path = "tables/LR_feature_importances.xlsx")
+```
+
+```{r}
+# Create a data frame for the alternating shading
+shading_data <- data.frame(
+  ymin = seq(0.5, length(unique(logit_total$Row.names)) - 0.5, by = 1), # Adjust based on your y-axis ticks
+  ymax = seq(1.5, length(unique(logit_total$Row.names)) + 0.5, by = 1), # Adjust based on your y-axis ticks
+  fill = rep(c("a", "b"), length.out = length(unique(logit_total$Row.names))) # Alternating fill colors
+)
+
+# Making a forest plot of multiple LR
+forest_plot <- logit_total %>%
+  ggplot(aes(x = OR, xmin = conf.low, xmax = conf.high, y = Row.names, color = degree, shape = significance)) + 
+  geom_rect(data = shading_data, aes(ymin = ymin, ymax = ymax, fill = fill), 
+            xmin = -Inf, xmax = Inf, alpha = 0.5, inherit.aes = FALSE) + 
+  geom_vline(aes(xintercept = 1), color = "#5e5e5e", linetype = "dashed") + 
+  geom_errorbarh(height = 0.5, position=position_dodge(width = 0.7)) + 
+  geom_point(position=position_dodge(width = 0.7), size = 2) + 
+  scale_shape_manual(values = c(19, 1)) +
+  scale_y_discrete(limits = rev) + 
+  coord_cartesian(xlim = c(0, 3.5)) + 
+  scale_color_brewer(palette = "Set2") + 
+  scale_fill_manual(values = c("a" = "lightgray", "b" = "white"), guide = "none") + # Define fill colors
+  labs(x = "Odds Ratio [95% CI]", y = "Application Metric", title = "Match Success Predictors by Degree Path", color = "Degree Path", shape = "Significance") + 
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5, size = 12))
+print(forest_plot)
+
+# Saving the plot
+#ggsave(plot = forest_plot, filename = "figures/multiple_LR_OR_plot.pdf", width = 2500, height = 2700, dpi = 300, units = "px")
+```
+
+
+
+```{r}
+df_logit <- df_clean %>% dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
+
+logit_model <- glm(Matched ~ degrees + Public_School + IvyP + step1_centered + step2_centered + X..Honored.Clerkships + Honors.A.This.Specialty + AOA.Sigma + GHHS + Research.Year + Absence.Year + Couples.Match + X..Research.Experiences + X..Abstracts..Pres..Posters + X..Peer.Rev.Publications + X..Volunteer.Experiences + X..Leadership.Positions + Required.to.Remediate, data = df_logit, family = "binomial")  # Applied_Total + InterviewOffer_Total + Total.Costs.Centered
+summary(logit_model)
+
+# Feature importances
+feat_importances <- car::Anova(logit_model)
+feat_importances <- feat_importances %>% tibble::rownames_to_column(var = "feature")
+feat_importances$percent <- feat_importances$`LR Chisq` / sum(feat_importances$`LR Chisq`)
+```
+
+
+
+### 6.4.1 Match Rate by specialty and degree
+
+```{r}
+# Match rate per specialty
+degree_list <- c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")
+match_by_specialty <- df_clean %>% dplyr::filter(degrees %in% degree_list)
+match_by_specialty$degrees <- factor(match_by_specialty$degrees, levels = degree_list)
+
+match_by_specialty <- match_by_specialty %>% dplyr::group_by(degrees, Specialty, Matched) %>% 
+  dplyr::summarize(counts = n(), .groups = 'drop') %>%
+  tidyr::complete(degrees, Specialty, Matched, fill = list(counts = 0)) %>%
+  dplyr::arrange(degrees, Specialty, Matched)
+match_by_specialty <- match_by_specialty %>% tidyr::pivot_wider(names_from = Matched, values_from = counts)
+match_by_specialty$match_rate <- (match_by_specialty$Yes / (match_by_specialty$Yes + match_by_specialty$No)) * 100
+
+# Filtering out specialties without a lot of data (3 or more?)
+match_by_specialty$min_count <- apply(match_by_specialty[, 3:4], 1, FUN = min)
+min_specialties <- match_by_specialty %>% dplyr::filter(min_count <= 3)
+
+# glm on degree path, specialty, and match outcome
+mlr <- glm(formula = Matched ~ Specialty * degrees, data = match_by_specialty, family = "binomial")
+summary(mlr)
+```
+
+
+
+
+## 6.5 Random forest, XGBoost, and multiple logistic regression with feature importances
+
+```{r}
+# Logistic regression feature importances
+lr_barplot <- logit_features %>% ggplot(aes(x = reorder(feature, -mean_feature), y = percent, fill = degree)) + 
+  geom_bar(stat = "identity", width = 0.6, position = position_dodge(width = 0.7)) + 
+  scale_y_continuous(expand = c(0, 0)) + 
+  scale_fill_brewer(palette = "Set2") + 
+  labs(x = "", y = "Feature Importance (%)", fill = "Degree Path", title = "Multiple Logistic Regression: Feature Importances") +
+  theme_classic() + 
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+print(lr_barplot)
+```
+
+```{r}
+# Completed in python - "05_random_forest.ipynb"
+rf_features <- read_xlsx("tables/random_forest_feature_importances.xlsx")
+rf_features$feature <- plyr::mapvalues(x = rf_features$feature, from = original_features, to = renamed_features)
+rf_features$degree <- factor(x = rf_features$degree, levels = c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
+rf_features$importance <- rf_features$importance * 100
+rf_features <- rf_features %>% dplyr::group_by(feature) %>% 
+  dplyr::mutate(mean_feature = mean(importance, na.rm = TRUE))
+
+# exporting as excel
+#write_xlsx(x = rf_features, path = "tables/random_forest_feature_importances_cleaned.xlsx")
+
+# Random forest feature importances
+rf_barplot <- rf_features %>% ggplot(aes(x = reorder(feature, -mean_feature), y = importance, color = degree, group = degree)) + 
+  geom_point() + 
+  geom_line() +
+  scale_color_brewer(palette = "Set2") + 
+  labs(x = "", y = "Feature Importance (%)", fill = "Degree Path", title = "Random Forest: Feature Importance on Matching") +
+  theme_classic() + 
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+print(rf_barplot)
+
+# Saving the plot
+#ggsave(plot = rf_barplot, filename = "figures/feature_importances_RF_plot.pdf", width = 2200, height = 1300, dpi = 300, units = "px")
+```
+
+```{r}
+# XGBoost Regressor for predicting match program ranks
+xgb_match <- read_xlsx("tables/XGBoost_match_rank.xlsx", sheet = "cleaned")
+xgb_match$degree <- factor(xgb_match$degree, levels = c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
+xgb_match$feature <- plyr::mapvalues(x = xgb_match$feature, from = original_features, to = renamed_features)
+xgb_match$importance <- xgb_match$importance * 100  #making this into a percent (%)
+xgb_match <- xgb_match %>% dplyr::group_by(feature) %>% 
+  dplyr::mutate(mean_feature = mean(importance, na.rm = TRUE))
+
+# Plotting
+xgb_match_plot <- xgb_match %>% ggplot(aes(x = reorder(feature, -mean_feature), y = importance, color = degree, group = degree)) + 
+  geom_point() + 
+  geom_line() +
+  scale_color_brewer(palette = "Set2") + 
+  labs(x = "", y = "Feature Importance (%)", fill = "Degree Path", title = "XGBoost: Feature Importance on Residency Program Rank") +
+  theme_classic() + 
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+print(xgb_match_plot)
+
+# Saving the plot
+#ggsave(plot = xgb_match_plot, filename = "figures/feature_importances_XGB_match.pdf", width = 2200, height = 1300, dpi = 300, units = "px")
+```
+
+```{r}
+# XGBoost Regressor for predicting number of interviews
+xgb_int <- read_xlsx("tables/XGBoost_interviews.xlsx", sheet = "cleaned")
+xgb_int$degree <- factor(xgb_int$degree, levels = c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
+xgb_int$feature <- plyr::mapvalues(x = xgb_int$feature, from = original_features, to = renamed_features)
+xgb_int$importance <- xgb_int$importance * 100  #making this into a percent (%)
+xgb_int <- xgb_int %>% dplyr::group_by(feature) %>% 
+  dplyr::mutate(mean_feature = mean(importance, na.rm = TRUE))
+
+# Plotting
+xgb_int_plot <- xgb_int %>% ggplot(aes(x = reorder(feature, -mean_feature), y = importance, color = degree, group = degree)) + 
+  geom_point() + 
+  geom_line() +
+  scale_color_brewer(palette = "Set2") + 
+  labs(x = "", y = "Feature Importance (%)", fill = "Degree Path", title = "XGBoost: Feature Importance on Interview Offers") +
+  theme_classic() + 
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+print(xgb_int_plot)
+
+# Saving the plot
+#ggsave(plot = xgb_int_plot, filename = "figures/feature_importances_XGB_interviews.pdf", width = 2200, height = 1300, dpi = 300, units = "px")
+```
+
+
+
+
+
+
+# 7. Cost Analysis
+
+## 7.1 Negative binomial regression for cost prediction per degree path
+
+```{r}
+# Cost analysis 
+cost_table <- df_clean %>% dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")) %>% 
+  summary_factorlist(dependent = "degrees", explanatory = c("Interview.Cost", "Application.Fees", "Virtual.Interview.Cost", "Other.Costs", "Total.Costs"))
+```
+
+```{r}
+# Centering interview costs to make them integers
+centered_interview_costs <- c("<$1000" = 500, "$1000-$1999" = 1500, "$2000-$2999" = 2500, "$3000-$3999" = 3500, "$4000-$4999" = 4500, "$5000-$5999" = 5500, "$6000-$6999" = 6500, "$7000-$7999" = 7500, "$8000-$8999" = 8500, "$9000-$9999" = 9500, "$10000-$10999" = 10500, "$11000-$11999" = 11500, ">$12000" = 12500)
+centered_application_fees <- c("<$500" = 250, "$500-$999" = 750, "$1000-$1499" = 1250, "$1500-$1999" = 1750, "$2000-$2499" = 2250, "$2500-$2999" = 2750, "$3000-$3499" = 3250, ">$3500" = 3750)
+centered_virtual_interview_costs <- c("<$50" = 25, "$50-$100" = 75, "$101-$150" = 125, "$151-$200" = 175, "$201-$250" = 225, "$251-$300" = 275, ">$300" = 325)
+centered_other_costs <- c("<$1000" = 500, "$1000-$1999" = 1500, "$2000-$2999" = 2500, "$3000-$3999" = 3500, "$4000-$4999" = 4500, "$5000-$5999" = 5500, "$6000-$6999" = 6500, "$7000-$7999" = 7500, "$8000-$8999" = 8500, "$9000-$9999" = 9500, ">$10000" = 10500)
+centered_total_costs <- c("<$1000" = 500, "$1000-$1999" = 1500, "$2000-$2999" = 2500, "$3000-$3999" = 3500, "$4000-$4999" = 4500, "$5000-$5999" = 5500, "$6000-$6999" = 6500, "$7000-$7999" = 7500, "$8000-$8999" = 8500, "$9000-$9999" = 9500, "$10000-$10999" = 10500, "$11000-$11999" = 11500, "$12000-$12999" = 12500, "$13000-$13999" = 13500, "$14000-$14999" = 14500, "$15000-$15999" = 15500, "$16000-$16999" = 16500, "$17000-$17999" = 17500, "$18000-$18999" = 18500, "$19000-$19999" = 19500, "$20000-$20999" = 20500, "$21000-$21999" = 21500, "$22000-$22999" = 22500, "$23000-$23999" = 23500, "$24000-$24999" = 24500, ">$25000" = 25500)
+
+# Making new columns with integers for costs
+df_clean <- df_clean %>% dplyr::mutate(
+  Interview.Cost.Centered = as.numeric(centered_interview_costs[as.character(Interview.Cost)]),
+  Application.Fees.Centered = as.numeric(centered_application_fees[as.character(Application.Fees)]),
+  Virtual.Interview.Cost.Centered = as.numeric(centered_virtual_interview_costs[as.character(Virtual.Interview.Cost)]),
+  Other.Costs.Centered = as.numeric(centered_other_costs[as.character(Other.Costs)]),
+  Total.Costs.Centered = as.numeric(centered_total_costs[as.character(Total.Costs)])
+)
+```
+
+```{r}
+# Plotting histograms of centered costs
+df_clean %>% dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")) %>% 
+  ggplot(aes(x = Total.Costs.Centered)) + 
+  geom_histogram(binwidth = 1000)
+
+# Cost analysis with centered costs
+cost_table_centered <- df_clean %>% dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")) %>% 
+  summary_factorlist(dependent = "degrees", explanatory = c("Interview.Cost.Centered", "Application.Fees.Centered", "Virtual.Interview.Cost.Centered", "Other.Costs.Centered", "Total.Costs.Centered"))
+```
+
+```{r}
+# Negative binomial regression function
+neg_binom_regression <- function(costs, verbose = FALSE) {
+  
+  # Cleaning the df
+  costs_df <- df_clean %>% 
+    dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")) %>% 
+    dplyr::filter(Sexual.Orientation %in% c("Male", "Female", NA))
+  
+  # Fitting the negative binomial regression
+  model <- glm.nb(costs_df[[costs]] ~ degrees + Age.Group + Sexual.Orientation + Race.Ethnicity + First.Generation.College + Food.Housing.Insecurity + Public_School + IvyP + Couples.Match, data = costs_df)
+  if (verbose) {
+    print(summary(model))
+  }
+
+  # Making a dataframe for exporting the results
+  model_df <- summary(model)$coefficients %>% as.data.frame()
+  colnames(model_df) <- c("estimate", "standard_error", "z_value", "p_value")
+  model_df$OR <- exp(model_df$estimate)
+  ci_df <- exp(confint(model)) %>% as.data.frame()
+  colnames(ci_df) <- c("conf.low", "conf.high")
+  model_df <- merge(model_df, ci_df, by=0)
+  model_df <- model_df[model_df$Row.names != "(Intercept)", ]
+  model_df$cost <- costs
+  model_df <- model_df %>% dplyr::mutate(
+    likelihood = dplyr::case_when(
+      conf.low > 1 & p_value < 0.05 ~ "Higher",
+      conf.high < 1 & p_value < 0.05 ~ "Lower",
+      p_value > 0.05 ~ "No Change"
+    )
+  )
+  model_df$likelihood <- factor(x = model_df$likelihood, levels = c("Higher", "No Change", "Lower"))
+  
+  return(model_df)
+}
+```
+
+```{r}
+# Costs negative binomial regressions
+costs.total <- neg_binom_regression(costs = "Total.Costs.Centered", verbose = F)
+costs.interviews <- neg_binom_regression(costs = "Interview.Cost.Centered", verbose = F)
+costs.applications <- neg_binom_regression(costs = "Application.Fees.Centered", verbose = F)
+costs.virt.int <- neg_binom_regression(costs = "Virtual.Interview.Cost.Centered", verbose = F)
+costs.other <- neg_binom_regression(costs = "Other.Costs.Centered", verbose = F)
+
+# Merging and cleaning
+costs_df <- dplyr::bind_rows(list(costs.total, costs.interviews, costs.applications, costs.virt.int, costs.other))
+costs_df$cost <- plyr::mapvalues(x = costs_df$cost, from = c("Total.Costs.Centered", "Interview.Cost.Centered", "Application.Fees.Centered", "Virtual.Interview.Cost.Centered", "Other.Costs.Centered"), to = c("Total Costs", "Interview Costs", "Application Fees", "Virtual Interview Costs", "Other Costs"))
+costs_df$cost <- factor(x = costs_df$cost, levels = c("Application Fees", "Interview Costs", "Virtual Interview Costs", "Other Costs", "Total Costs"))
+costs_df$p_value <- signif(x = costs_df$p_value, digits = 2)
+
+# Exporting to excel
+#write_xlsx(x = costs_df, path = "tables/cost_metrics.xlsx")
+
+# Plotting a forest plot
+forest_plot <- costs_df %>% 
+  ggplot(aes(x = OR, xmin = conf.low, xmax = conf.high, y = reorder(Row.names, OR), color = likelihood)) + 
+  geom_point() + 
+  geom_errorbarh(height = 0.2) + 
+  geom_text(aes(label = p_value, x = 2.5), hjust = 0, size = 3) + 
+  facet_wrap(~cost, ncol = 5) +
+  geom_vline(aes(xintercept = 1), color = "black", linetype = "dashed") + 
+  scale_x_continuous(n.breaks = 8, limits = c(0, 4)) +
+  scale_color_manual(values = c("#eb2323", "#525252", "#2e66ff")) +
+  labs(x = "Odds Ratio [95% CI]", y = "Predictors", title = "Application and Interview Costs", color = "Odds") + 
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5, size = 12))
+print(forest_plot)
+
+# Saving the plot
+#ggsave(plot = forest_plot, filename = "figures/cost_analysis.png", width = 4000, height = 2300, dpi = 300, units = "px")
+```
+
+### 7.1.1 Improved plot
+
+```{r}
+# Negative binomial regression function
+neg_binom_regression2 <- function(costs, cost_metric) {
+  
+  # Cleaning the df
+  costs_df <- df_clean %>% 
+    dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")) %>% 
+    dplyr::filter(Sexual.Orientation %in% c("Male", "Female", NA))
+  
+  # Fitting the negative binomial regression
+  model <- glm.nb(costs_df[[costs]] ~ degrees + Age.Group + Sexual.Orientation + Race.Ethnicity + First.Generation.College + Food.Housing.Insecurity + Public_School + IvyP + Couples.Match, data = costs_df)
+
+  # Making a dataframe for exporting the results
+  model_df <- summary(model)$coefficients %>% as.data.frame()
+  model_df <- model_df %>% tibble::rownames_to_column(var = "name")
+  model_df <- model_df[model_df$name != "(Intercept)", ]
+  colnames(model_df) <- c("name", "beta", "se", "z_value", "p_value")
+  model_df$cost_metric <- cost_metric
+  groupings <- c("Degree", "Degree", "Degree", "Degree", "Age", "Age", "Age", "Age", "Age", "Age", "Demographics", "Demographics", "School", "Demographics", "School", "School", "Demographics")
+  model_df$groupings <- groupings
+  
+  return(model_df)
+}
+```
+
+```{r}
+# Negative binomial distribution for costs split by cost metric
+costs.total <- neg_binom_regression2(costs = "Total.Costs.Centered", cost_metric = "Total Costs")
+costs.interviews <- neg_binom_regression2(costs = "Interview.Cost.Centered", cost_metric = "Interview Costs")
+costs.applications <- neg_binom_regression2(costs = "Application.Fees.Centered", cost_metric = "Application Fees")
+costs.virt.int <- neg_binom_regression2(costs = "Virtual.Interview.Cost.Centered", cost_metric = "Virtual Interview Fees")
+#costs.other <- neg_binom_regression2(costs = "Other.Costs.Centered", cost_metric = "Other Costs")  #not necessary
+
+# Merging and tidying
+costs_df <- dplyr::bind_rows(list(costs.total, costs.interviews, costs.applications, costs.virt.int))
+costs_df$cost_metric <- factor(costs_df$cost_metric, levels = c("Virtual Interview Fees", "Application Fees", "Interview Costs", "Total Costs"))
+costs_df$groupings <- factor(costs_df$groupings, levels = c("Degree", "Age", "Demographics", "School"))
+
+# ggforest
+ggforest <- ggforestplot::forestplot(df = costs_df, 
+                                     name = name, 
+                                     estimate = beta, 
+                                     se = se, 
+                                     pvalue = p_value, 
+                                     psignif = 0.05/17,
+                                     logodds = TRUE,
+                                     colour = cost_metric,
+                                     xlab = "Odds Ratio [95% CI]",
+                                     title = "Costs for Applying to Residency") +
+  ggforce::facet_col(facets = ~groupings, scales = "free_y", space = "free") + 
+  scale_color_manual(values = c("#8F87FF", "#00C0C0", "#FF4A4F", "black"))
+print(ggforest)
+
+# Saving the plot
+#ggsave(plot = ggforest, filename = "figures/cost_analysis_ggforest.pdf", width = 3000, height = 3000, dpi = 300, units = "px")
+```
+
+
+## 7.2 Cost of applying over time (virtual vs non-virtual due to COVID)
+
+```{r}
+costs_per_year.total <- df_clean %>% 
+  dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")) %>% 
+  dplyr::filter(!is.na(Total.Costs.Centered)) %>% 
+  dplyr::filter(!is.na(Application.Fees.Centered)) %>% 
+  dplyr::filter(!is.na(Interview.Cost.Centered)) %>% 
+  dplyr::filter(!is.na(Other.Costs.Centered))
+```
+
+
+```{r}
+# function to calculate SEM
+sem_calc <- function(x) {
+  x <- x[!is.na(x)]  #removing NA values
+  sem <- (sd(x)) / (sqrt(length(x)))
+  return(sem)
+}
+
+# Calculating mean +/- SEM for cost metrics
+costs_per_year.total <- df_clean %>% 
+  dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")) %>% 
+  dplyr::group_by(Survey.Year, degrees) %>% 
+  dplyr::summarise(mean_costs = mean(Total.Costs.Centered, na.rm = TRUE),
+                   sem_costs = sem_calc(Total.Costs.Centered))
+costs_per_year.total$cost_metric <- "Total Costs"
+
+costs_per_year.app_fees <- df_clean %>% 
+  dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")) %>% 
+  dplyr::group_by(Survey.Year, degrees) %>% 
+  dplyr::summarise(mean_costs = mean(Application.Fees.Centered, na.rm = TRUE),
+                   sem_costs = sem_calc(Application.Fees.Centered))
+costs_per_year.app_fees$cost_metric <- "Application Fees"
+
+costs_per_year.interview_costs <- df_clean %>% 
+  dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")) %>% 
+  dplyr::group_by(Survey.Year, degrees) %>% 
+  dplyr::summarise(mean_costs = mean(Interview.Cost.Centered, na.rm = TRUE),
+                   sem_costs = sem_calc(Interview.Cost.Centered))
+costs_per_year.interview_costs$cost_metric <- "Interview Costs"
+
+costs_per_year.virtual_interview_costs <- df_clean %>% 
+  dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")) %>% 
+  dplyr::group_by(Survey.Year, degrees) %>% 
+  dplyr::summarise(mean_costs = mean(Virtual.Interview.Cost.Centered, na.rm = TRUE),
+                   sem_costs = sem_calc(Virtual.Interview.Cost.Centered))
+costs_per_year.virtual_interview_costs$cost_metric <- "Virtual Interview Costs"
+
+costs_per_year.other_costs <- df_clean %>% 
+  dplyr::filter(degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc")) %>% 
+  dplyr::group_by(Survey.Year, degrees) %>% 
+  dplyr::summarise(mean_costs = mean(Other.Costs.Centered, na.rm = TRUE),
+                   sem_costs = sem_calc(Other.Costs.Centered))
+costs_per_year.other_costs$cost_metric <- "Other Costs"
+
+# Merging and tidying
+costs_per_year <- dplyr::bind_rows(list(costs_per_year.total, costs_per_year.app_fees, costs_per_year.interview_costs, costs_per_year.virtual_interview_costs, costs_per_year.other_costs))
+costs_per_year$degrees <- factor(costs_per_year$degrees, levels = c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"))
+costs_per_year$cost_metric <- factor(costs_per_year$cost_metric, levels = c("Total Costs", "Application Fees", "Interview Costs", "Virtual Interview Costs", "Other Costs"))
+```
+
+```{r}
+# Plotting costs over time across degrees
+total.costs.plot <- costs_per_year %>% 
+  dplyr::filter(Survey.Year > 2018) %>% 
+  ggplot(aes(x = Survey.Year, y = mean_costs, color = degrees)) + 
+  geom_line() + 
+  geom_errorbar(aes(ymin = mean_costs - sem_costs, ymax = mean_costs + sem_costs), width = 0.1) + 
+  geom_point() + 
+  facet_wrap(~cost_metric, ncol = 5) + 
+  scale_color_brewer(palette = "Set2") + 
+  labs(x = "Year", y = "Application Costs ($)", color = "Degree Path", title = "") +
+  theme_classic() + 
+  theme(plot.title = element_text(hjust = 0.5),
+        strip.background = element_blank(),
+        strip.text = element_text(size = 14),
+        axis.title = element_text(size = 14),
+        legend.title = element_text(size = 14),
+        legend.text = element_text(size = 12),
+        axis.text.x = element_text(size = 12, angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 12))
+print(total.costs.plot)
+
+# Saving the plot
+#ggsave(plot = total.costs.plot, filename = "figures/costs_overtime2.pdf", width = 4000, height = 1000, dpi = 300, units = "px")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+ddd <- data.frame(
+  x = c(1, 2, 3, 4, 5),
+  y_line = c(1, 2, 3, 4, 6),
+  y_points = c(2.5, 1.8, 2.3, 1.7, 2.1)  # Points near the line
+)
+
+ggplot(ddd, aes(x = x)) +
+  geom_line(aes(y = y_line), color = "blue", size = 1) +  # main line
+  geom_point(aes(y = y_points), color = "red", size = 3) +  # points
+  geom_segment(aes(x = x, xend = x, y = y_line, yend = y_points), linetype = "dashed")
+
+  #geom_segment(aes(x = Specialty, 
+  #                 xend = Specialty, 
+  #                 y = med_app, 
+  #                 yend = med_app_dual,
+  #                 color = degrees),
+  #             position = position_dodge(width = 0.5),
+  #             linetype = "dashed") +
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
