@@ -16,8 +16,9 @@ tables/texasSTAR_unique_programs.csv
 tables/unmatched_unique_programs.csv
 tables/STAR_Programs_2017_2023_final_matched.csv
 tables/STAR_Programs_2017_2023_merged.csv
+tables/dox_star_error_tracker.xlsx
 .RData
 .Rhistory
 2024-07-29_Texas-STAR.Rproj
-dox_star_error_tracker.xlsx
+
 
