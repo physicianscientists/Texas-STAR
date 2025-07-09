@@ -254,8 +254,7 @@ df_clean$interview_percent <- (df_clean$InterviewOffer_Total / df_clean$Applied_
 ```{r}
 # Dependent and explanatory variables
 dependent = "degrees"
-#explanatory = c("Specialty", "Public_School", "IvyP", "Applied_Total", "InterviewOffer_Total", "Matched", "Step.1", "Step.2.CK", "Cumulative.Quartile", "Quartile.Rank", "X..Honored.Clerkships", "Honors.A.This.Specialty", "AOA.Sigma", "GHHS", "Couples.Match", "X..Research.Experiences", "X..Abstracts..Pres..Posters", "X..Peer.Rev.Publications", "X..Volunteer.Experiences", "X..Leadership.Positions", "Required.to.Remediate", "Pass.Attempt...Step.1", "Pass.Attempt...Step.2.CK", "Pass.Attempt...Step.2.CS", "Majority.of.Interview.Offers", "Majority.of.Interviews.Attended", "X..Interviews.Attended", "Interview.Cost", "Application.Fees", "Virtual.Interview.Cost", "Other.Costs", "Virtual.Environment", "ERAS.Supplemental", "Demographic.Willingness", "Age.Group", "Sexual.Orientation", "Race.Ethnicity", "First.Generation.College", "Food.Housing.Insecurity")
-explanatory <- c("Age.Group", "Sexual.Orientation", "Race.Ethnicity", "First.Generation.College", "Food.Housing.Insecurity")
+explanatory = c("Specialty", "Public_School", "IvyP", "Applied_Total", "InterviewOffer_Total", "Matched", "Step.1", "Step.2.CK", "Cumulative.Quartile", "Quartile.Rank", "X..Honored.Clerkships", "Honors.A.This.Specialty", "AOA.Sigma", "GHHS", "Couples.Match", "X..Research.Experiences", "X..Abstracts..Pres..Posters", "X..Peer.Rev.Publications", "X..Volunteer.Experiences", "X..Leadership.Positions", "Required.to.Remediate", "Pass.Attempt...Step.1", "Pass.Attempt...Step.2.CK", "Pass.Attempt...Step.2.CS", "Majority.of.Interview.Offers", "Majority.of.Interviews.Attended", "X..Interviews.Attended", "Interview.Cost", "Application.Fees", "Virtual.Interview.Cost", "Other.Costs", "Virtual.Environment", "ERAS.Supplemental", "Demographic.Willingness", "Age.Group", "Sexual.Orientation", "Race.Ethnicity", "First.Generation.College", "Food.Housing.Insecurity")
 
 table1 <- df_clean[df_clean$degrees %in% c("MD", "MD-PhD", "MD-MPH", "MD-MBA", "MD-MSc"), ]  #filtering for MD students whose group > 1000 for now
 
@@ -1503,6 +1502,7 @@ model_extracter <- function(m, zt, test_name = NULL) {
   # Returning
   return(coef_df)
 }
+
 ```
 
 ```{r}
@@ -1525,7 +1525,7 @@ overall_interview_df$degrees <- factor(x = overall_interview_df$degrees, levels 
 lin_reg_plot <- overall_interview_df %>% ggplot(aes(x = Applied_Total, y = InterviewOffer_Total, color = degrees)) +
   geom_smooth(method = "lm", se = T, fill = "lightgrey") + 
   scale_color_brewer(palette = "Dark2") +
-  coord_cartesian(xlim = c(1, 140), ylim = c(5, 30)) + 
+  coord_cartesian(xlim = c(0, 140), ylim = c(5, 30)) + 
   scale_x_continuous(breaks = scales::pretty_breaks(n = 7), expand = c(0, 0)) + 
   scale_y_continuous(breaks = scales::pretty_breaks(n = 6), expand = c(0, 0)) + 
   labs(title = "Linear Regression: Applications x Interview Offers", x = "Total Applications", y = "Interview Offers", color = "Degrees") + 

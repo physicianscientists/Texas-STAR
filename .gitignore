@@ -17,6 +17,8 @@ tables/unmatched_unique_programs.csv
 tables/STAR_Programs_2017_2023_final_matched.csv
 tables/STAR_Programs_2017_2023_merged.csv
 tables/dox_star_error_tracker.xlsx
+tables/doximity_rankings.xlsx
+tables/program_counts.xlsx
 .RData
 .Rhistory
 2024-07-29_Texas-STAR.Rproj
