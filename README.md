@@ -2,6 +2,7 @@
 
 ### Author: Daniel Brock
 ### Date Created: 12/14/2024
+### Date Updated for Review: 7/8/2025
 
 ## **Purpose**
 The goal of this study is to identify applicant characteristics, disparities, and specialty trends among dual degree (MD-PhD, MD-MPH, MD-MBA, and MD-MSc) applicants.

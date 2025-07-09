@@ -1852,7 +1852,7 @@ forest_plot_interviews <- model_df %>%
   theme_classic() +
   theme(plot.title = element_text(hjust = 0.5, size = 12),
         strip.background = element_blank())
-forest_plot_interviews
+print(forest_plot_interviews)
 
 # Matches
 forest_plot_matches <- model_df %>% 
