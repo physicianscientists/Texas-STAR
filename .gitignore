@@ -1,12 +1,15 @@
 # Folders to ignore
 .ipynb_checkpoints/
 .Rproj.user/
+.vscode/
 AAMC_data/
 data/
 dox_matching/
 dox_rankings/
 manuscript/
 posters/
+blueridge_data/
+blueridge_matching/
 
 # Files to ignore
 tables/reputation_doximity_ranks.xlsx
@@ -22,5 +25,12 @@ tables/program_counts.xlsx
 .RData
 .Rhistory
 2024-07-29_Texas-STAR.Rproj
+Supporting data values.xlsx
+tables.xlsx
+tables/figure1_supporting.xlsx
+tables/figure2_supporting.xlsx
+tables/figure3_supporting_raw.xlsx
+tables/supplemental_figure1_supporting_raw.xlsx
+tables/supplemental_figure2_blueridge_ranks.xlsx
 
 

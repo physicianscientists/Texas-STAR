@@ -14,5 +14,6 @@ The goal of this study is to identify applicant characteristics, disparities, an
    * Source: https://www.doximity.com/residency/
 3. 03_school_matcher.py - python script to match residency programs by specialty listed in Texas STAR to program names listed in Doximity. Based on fuzzy string matching.
 4. 04_school_matcher.ipynb - Jupyter notebook for concatenating and cleaning all matched names from Doximity and Texas STAR.
-5. 05_random_forest.ipynb - Jupyter notebook modeling a random forest classifier to determine feature importance for different degree paths.
-6. 06_XGBoost.ipynb - Jupyter notebook utilizing an XGBoost regressor to determine feature importance for predicting number of interview offers and residency program rank.
+5. 05_random_forest.ipynb - Jupyter notebook modeling a random forest classifier to determine feature importance for different degree paths. No longer used in main paper.
+6. 06_XGBoost.ipynb - Jupyter notebook utilizing an XGBoost regressor to determine feature importance for predicting number of interview offers and residency program rank. No longer used in main paper.
+7. 07_BlueRidge_rankings.ipynb - Jupyter notebook for matching programs ranked by Blue Ridge to TexasSTAR.

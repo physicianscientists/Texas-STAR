@@ -20,15 +20,19 @@ def data_importer():
     # Importing dataframes 
     star = pd.read_csv("tables/texasSTAR_unique_programs.csv")
     unmatched = pd.read_csv("tables/unmatched_unique_programs.csv")
-    dox = pd.read_excel("tables/doximity_rankings.xlsx")
+    #dox = pd.read_excel("tables/doximity_rankings.xlsx")
+    
+    # Do this instead for blueridge data
+    dox = pd.read_excel("blueridge_data/SchoolOfMedicine_2024_2001_B.xlsx", sheet_name='2024_2001', header=1)  #blueridge data
+    dox = dox[0:157]
     
     # Optional filter for specialties that I already matched
     #specialties = ["Anesthesiology", "Child Neurology", "Dermatology", "Emergency Medicine", "Family Medicine", "Internal Medicine"]
-    unmatched = unmatched[unmatched["specialty"]=="Vascular Surgery"]  #change accordingly
+    unmatched = unmatched[unmatched["specialty"]=='Anesthesiology']  #change accordingly
     
-    print(star.head())
-    print(unmatched.head())
-    print(dox.head())
+    #print(star.head())
+    #print(unmatched.head())
+    #print(dox.head())
     return star, unmatched, dox
 
 
@@ -42,6 +46,7 @@ def program_matcher(unmatched, dox):
     """
     
     match_list = []
+    tally = len(unmatched["program"].unique())
     for index, row in unmatched.iterrows():
         
         # Programs and specialties from Texas STAR
@@ -49,8 +54,12 @@ def program_matcher(unmatched, dox):
         specialty = row["specialty"]
         
         # Filtering doximity by specialty and getting a unique list of specialties
-        dox_filt = dox[dox["specialty"].isin(["Vascular Surgery", "Surgery"])]  #==specialty change this
-        dox_filt = dox_filt["program"].unique()
+        #dox_filt = dox[dox["specialty"].isin(["Vascular Surgery", "Surgery"])]  #==specialty change this
+        #dox_filt = dox_filt["program"].unique()
+        
+        # Do this for blueridge data
+        dox_filt = dox["Name"].str.lower().unique()
+        program = program.lower()
         
         # Looping over each specialty and appending fuzzy string match scores
         ratio = []
@@ -68,7 +77,7 @@ def program_matcher(unmatched, dox):
             dox_program_list.append(dox_program)
         
         # Making a dataframe and displaying to top 10 matches
-        df = pd.DataFrame({"ratio": ratio, "partial_ratio": partial_ratio, "sort_ratio": sort_ratio, "set_ratio": set_ratio, "partial_token": partial_token, "dox_program": dox_program_list})
+        df = pd.DataFrame({"ratio": ratio, "partial_ratio": partial_ratio, "sort_ratio": sort_ratio, "set_ratio": set_ratio, "partial_token": partial_token, "blueridge_program": dox_program_list})  #dox
         df["star_program"] = program
         df["specialty"] = specialty
         df["mean_ratio"] = df[["ratio", "partial_ratio", "sort_ratio", "set_ratio", "partial_token"]].mean(axis=1)
@@ -92,9 +101,13 @@ def program_matcher(unmatched, dox):
                 matched_df = pd.DataFrame(df.iloc[selection]).transpose()
                 match_list.append(matched_df)
             except:
-                unmatched_df = pd.DataFrame({"ratio": np.nan, "partial_ratio": np.nan, "sort_ratio": np.nan, "set_ratio": np.nan, "partial_token": np.nan, "dox_program": program, "star_program": program, "specialty": specialty, "mean_ratio": "unable to match"}, index=[0])
+                unmatched_df = pd.DataFrame({"ratio": np.nan, "partial_ratio": np.nan, "sort_ratio": np.nan, "set_ratio": np.nan, "partial_token": np.nan, "blueridge_program": program, "star_program": program, "specialty": specialty, "mean_ratio": "unable to match"}, index=[0])
                 match_list.append(unmatched_df)
-
+                
+        # Progress update
+        tally -= 1
+        print(f"\n{tally} programs left to match.\n")   
+        
     # Concatenating and returning the df
     df_total = pd.concat(match_list)
     return df_total
@@ -108,7 +121,7 @@ def data_exporter(df):
     user_input = input("\nWhich Specialties did you run this on (underscore separated): ")
     today = str(date.today())
     filename = today + "_" + user_input
-    df.to_excel("dox_matching/" + filename + ".xlsx", index = False)
+    df.to_excel("blueridge_matching/" + filename + ".xlsx", index = False)  #dox_matching or blueridge_matching
 
 
 
