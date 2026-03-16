@@ -1,8 +1,12 @@
 # **Texas Seeking Transparency in Application to Residency (STAR) Dual Degree Study**
 
 ### Author: Daniel Brock
-### Date Created: 12/14/2024
-### Date Updated for Review: 7/8/2025
+### Date Published: 2/19/2026
+
+## **Citation**
+View the publication on JCI Insight: https://insight.jci.org/articles/view/198778
+
+Please cite us: Brock DC, Rupert DD, Darville T, Jansen CS, Wisdom EM, Tang CY. Dual-degree pathways in the residency match: a comparative analysis of application behaviors and outcomes. JCI Insight. Published 2026 Feb 19. [https://doi.org/10.1172/jci.insight.198778 ](https://insight.jci.org/articles/view/198778)
 
 ## **Purpose**
 The goal of this study is to identify applicant characteristics, disparities, and specialty trends among dual degree (MD-PhD, MD-MPH, MD-MBA, and MD-MSc) applicants.
